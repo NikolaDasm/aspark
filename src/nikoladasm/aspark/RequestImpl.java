@@ -1,0 +1,308 @@
+/*
+ *  ASpark
+ *  Copyright (C) 2015  Nikolay Platov
+ *
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU Lesser General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU Lesser General Public License for more details.
+ *
+ *  You should have received a copy of the GNU Lesser General Public License
+ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+package nikoladasm.aspark;
+
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
+
+import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.HttpHeaders;
+import io.netty.handler.codec.http.HttpVersion;
+import io.netty.handler.codec.http.QueryStringDecoder;
+import io.netty.handler.codec.http.cookie.Cookie;
+import io.netty.handler.codec.http.cookie.ServerCookieDecoder;
+
+import static io.netty.handler.codec.http.HttpHeaders.Names.*;
+
+import nikoladasm.aspark.HttpMethod;
+import nikoladasm.sattributemap.*;
+
+import static nikoladasm.aspark.ASparkUtil.*;
+
+public class RequestImpl implements Request {
+	
+	private FullHttpRequest request;
+	private Map<String, String> params;
+	private Map<String, Integer> parameterNamesMap;
+	private Matcher parameterMatcher;
+	private HttpMethod requestMethod;
+	private HttpMethod method;
+	private String path;
+	private byte[] bodyAsBytes;
+	private QueryStringDecoder queryStringDecoder;
+	private Set<String> headers;
+	private QueryParamsMap queryMap;
+	private Map<String, Cookie> fullCookies;
+	private Map<String, String> cookies;
+	private SAttributeMap attributeMap;
+	private HttpHeaders nettyHeaders;
+	private int port;
+	private String ipAddress;
+	private HttpVersion version;
+	
+	public RequestImpl(FullHttpRequest request,
+			QueryStringDecoder queryStringDecoder,
+			HttpMethod requestMethod,
+			HttpMethod method,
+			String path,
+			int port,
+			String ipAddress,
+			HttpVersion version) {
+		this.request = request;
+		this.queryStringDecoder = queryStringDecoder;
+		this.requestMethod = requestMethod;
+		this.method = method;
+		this.nettyHeaders = request.headers();
+		this.path = path;
+		this.port = port;
+		this.ipAddress = ipAddress;
+		this.version = version;
+		readBodyAsBytes();
+	}
+	
+	public void parameterNamesMap(Map<String, Integer> parameterNamesMap) {
+		this.parameterNamesMap = parameterNamesMap;
+	}
+	
+	public void parameterMatcher(Matcher parameterMatcher) {
+		this.parameterMatcher = parameterMatcher;
+	}
+	
+	@Override
+	public Map<String, String> params() {
+		if (params != null) {
+			params = new HashMap<>();
+			parameterNamesMap.forEach((name, index) -> {
+				params.put(name, parameterMatcher.group(index));
+			});
+		}
+		return params;
+	}
+	
+	@Override
+	public String params(String param) {
+		String name = (param.startsWith(":")) ? param : ":"+param; 
+		if (params != null) return params.get(name);
+		Integer index = parameterNamesMap.get(name);
+		if (index == null) return null;
+		return parameterMatcher.group(index);
+	}
+	
+	@Override
+	public String[] splat() {
+		if (parameterMatcher.groupCount() > parameterNamesMap.size())
+			return parameterMatcher.group(parameterNamesMap.size()+1).split("/");
+		else
+			return null;
+	}
+	
+	@Override
+	public String requestMethod() {
+		return requestMethod.name();
+	}
+	
+	@Override
+	public String method() {
+		return method.name();
+	}
+	
+	@Override
+	public String host() {
+		return nettyHeaders.get(HOST);
+	}
+	
+	@Override
+	public String userAgent() {
+		return nettyHeaders.get(USER_AGENT);
+	}
+	
+	@Override
+	public int port() {
+		return port;
+	}
+	
+	@Override
+	public String pathInfo() {
+		return path;
+	}
+	
+	@Override
+	public String contentType() {
+		return nettyHeaders.get(CONTENT_TYPE);
+	}
+	
+	@Override
+	public String ip() {
+		return ipAddress;
+	}
+	
+	@Override
+	public String body() {
+		return new String(bodyAsBytes, UTF_8);
+	}
+	
+	@Override
+	public <T> T body(RequestTransformer<T> transformer) throws Exception {
+		return transformer.transform(bodyAsBytes);
+	}
+	
+	@Override
+	public byte[] bodyAsBytes() {
+		return bodyAsBytes;
+	}
+	
+	private void readBodyAsBytes() {
+		bodyAsBytes = new byte[request.content().readableBytes()];
+		request.content().readBytes(bodyAsBytes);
+	}
+	
+	@Override
+	public int contentLength() {
+		return Integer.valueOf(nettyHeaders.get(CONTENT_LENGTH));
+	}
+	
+	@Override
+	public String queryParams(String queryParam) {
+		List<String> valueList = queryStringDecoder.parameters().get(queryParam);
+		return (valueList == null) ? null : valueList.get(0);
+	}
+	
+	@Override
+	public String[] queryParamsValues(String queryParam) {
+		List<String> valueList = queryStringDecoder.parameters().get(queryParam);
+		return (valueList == null) ? null : valueList.toArray(new String[valueList.size()]);
+	}
+	
+	@Override
+	public String headers(String header) {
+		return nettyHeaders.get(header);
+	}
+	
+	@Override
+	public Set<String> queryParams() {
+		return queryStringDecoder.parameters().keySet();
+	}
+	
+	@Override
+	public Set<String> headers() {
+		if (headers == null) {
+			headers = new HashSet<>();
+			nettyHeaders.forEach((entry) -> {
+				headers.add(entry.getKey());
+			});
+		}
+		return headers;
+	}
+	
+	@Override
+	public String queryString() {
+		String uri = queryStringDecoder.uri();
+		int beginQuery = uri.indexOf('?');
+		if (beginQuery != -1)
+			return uri.substring(beginQuery+1);
+		return "";
+	}
+	
+	@Override
+	public QueryParamsMap queryMap() {
+		initQueryMap();
+		return queryMap;
+	}
+	
+	@Override
+	public QueryParamsMap queryMap(String key) {
+		initQueryMap();
+		return queryMap().get(key);
+	}
+	
+	private void initQueryMap() {
+		if (queryMap == null)
+			queryMap = parseQueryParams(queryStringDecoder.parameters());
+	}
+	
+	@Override
+	public Map<String, String> cookies() {
+		readCookie();
+		return cookies;
+	}
+	
+	@Override
+	public String cookie(String name) {
+		readCookie();
+		return cookies.get(name);
+	}
+	
+	@Override
+	public long cookieMaxAge(String name) {
+		readCookie();
+		return fullCookies.get(name).maxAge();
+	}
+	
+	private void readCookie() {
+		if (cookies != null) return;
+		fullCookies = new HashMap<>();
+		cookies = new HashMap<>();
+		String cookieString = nettyHeaders.get(COOKIE);
+		if (cookieString != null) {
+			Set<Cookie> cookies = ServerCookieDecoder.LAX.decode(cookieString);
+			if (!cookies.isEmpty()) {
+				for (Cookie cookie: cookies) {
+					fullCookies.put(cookie.name(), cookie);
+					this.cookies.put(cookie.name(), cookie.value());
+				}
+			}
+			
+		}
+	}
+	
+	@Override
+	public String protocol() {
+		return version.text();
+	}
+
+	@Override
+	public <T> SAttribute<T> attr(SAttributeKey<T> key) {
+		if (attributeMap == null)
+			attributeMap = new DefaultSAttributeMap();
+		return attributeMap.attr(key);
+	}
+
+	@Override
+	public void clear() {
+		if (attributeMap != null)
+			attributeMap.clear();
+	}
+
+	@Override
+	public <T> boolean hasAttr(SAttributeKey<T> key) {
+		return (attributeMap == null) ? false : attributeMap.hasAttr(key);
+	}
+
+	@Override
+	public <T> void remove(SAttributeKey<T> key) {
+		if (attributeMap != null)
+			attributeMap.attr(key).remove();
+	}
+}

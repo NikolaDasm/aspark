@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+     ASpark
+     Copyright (C) 2015  Nikolay Platov
+ 
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU Lesser General Public License as published by
+     the Free Software Foundation, either version 3 of the License, or
+     (at your option) any later version.
+ 
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+     GNU Lesser General Public License for more details.
+ 
+     You should have received a copy of the GNU Lesser General Public License
+     along with this program.  If not, see <http://www.gnu.org/licenses/>.
+-->
+<project name="aspark-core">
+	<property name="version" value="0.1.0b"/>
+	<property name="src.dir" value="src"/>
+	<property name="test.dir" value="test"/>
+	<property name="build.dir" value="build"/>
+	<property name="src.classes.dir" value="${build.dir}/classes"/>
+	<property name="test.classes.dir" value="${build.dir}/test-classes"/>
+	<property name="lib.dir" value="lib"/>
+    <property name="jar.dir" value="${build.dir}/jar"/>
+
+	<property name="classOutputDir" value="build" />
+
+	<property name="junit.dir" value="${build.dir}/junit"/>
+
+	<path id='src.compile.classpath'>
+		<fileset dir="${lib.dir}">
+			<include name="*.jar"/>
+		</fileset>
+	</path>
+
+	<path id='test.compile.classpath'>
+		<path refid="src.compile.classpath"/>
+		<pathelement path="${src.classes.dir}"/>
+	</path>
+
+	<path id='test.run.classpath'>
+		<path refid="test.compile.classpath"/>
+		<pathelement path="${test.classes.dir}"/>
+	</path>
+
+	<target name="clean">
+	        <delete dir="${build.dir}"/>
+	</target>
+
+	<target name="compile-src" depends="clean">
+	        <mkdir dir="${src.classes.dir}"/>
+	        <javac srcdir="${src.dir}"
+	        	destdir="${src.classes.dir}"
+	        	includeantruntime="false">
+	        	<classpath refid="src.compile.classpath"/>
+	        </javac>	
+	</target>
+	
+	<target name="compile-test"
+		depends="clean,compile-src">
+	    <mkdir dir="${test.classes.dir}"/>
+	    <javac srcdir="${test.dir}"
+	    	destdir="${test.classes.dir}"
+	    	includeantruntime="false">
+	    	<classpath refid="test.compile.classpath"/>
+	    </javac>	
+	</target>
+	
+	<target name="run-unittest" depends="compile-test">
+		<mkdir dir="${junit.dir}"/>
+		<junit fork="yes" printsummary="withOutAndErr">
+			<formatter type="xml"/>
+			<batchtest todir="${junit.dir}">
+				<fileset dir="${test.classes.dir}">
+					<include name="**/*UnitTest.class"/>
+				</fileset>
+			</batchtest>
+			<classpath refid="test.run.classpath"/>
+		</junit>
+	</target>
+		
+	<target name="jar" depends="compile-src">
+	        <mkdir dir="${jar.dir}"/>
+	        <jar destfile="${jar.dir}/${ant.project.name}-${version}.jar" basedir="${src.classes.dir}">
+	        </jar>
+	</target>
+	
+	<target name="test" depends="run-unittest"/>
+	
+	<target name="build" depends="test,jar"/>
+
+</project>
