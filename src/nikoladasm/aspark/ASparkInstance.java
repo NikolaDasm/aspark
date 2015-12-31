@@ -22,10 +22,12 @@ import static nikoladasm.aspark.ASparkUtil.*;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.security.KeyStore;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
@@ -47,14 +49,15 @@ public class ASparkInstance extends Routable {
 	private static final InternalLogger LOG = InternalLoggerFactory.getInstance(nikoladasm.aspark.ASparkInstance.class);
 
 	public static final int ASPARK_DEFAULT_PORT = 4568;
+
+	private static final String DEFAULT_SERVER_NAME = "ASpark - powered by Netty";
+	
 	private static final String BEFORE_MAPPING_ERROR_MESSAGE =
 		"This must be done before route mapping has begun";
-	private static final String[] DEFAULT_STATIC_RESOURCE_EXT = {"*"};
 	private static final String[] DEFAULT_STATIC_RESOURCE_INDEX = {"index.html", "index.htm"};
-	private static final String[][] DEFAULT_STATIC_RESOURCE_CONFIGURATION =
-		{DEFAULT_STATIC_RESOURCE_EXT, DEFAULT_STATIC_RESOURCE_INDEX};
 	private static final String PROTOCOL = "TLS";
 	private static final String KEY_TYPE = "JKS";
+	private static final String MIME_TYPES_PROPERTY_FILE = "resources/mime-types.properties";
 	
 	private volatile String ipAddress = "0.0.0.0";
 	private volatile int port = ASPARK_DEFAULT_PORT;
@@ -72,6 +75,8 @@ public class ASparkInstance extends Routable {
 	private volatile StaticResourceLocation location;
 	private volatile StaticResourceLocation externalLocation;
 	private volatile SSLContext sslContext;
+	private volatile String serverName = DEFAULT_SERVER_NAME;
+	private Properties mimeTypes;
 
 	public ASparkInstance() {
 		routes = new ConcurrentLinkedQueue<>();
@@ -144,18 +149,56 @@ public class ASparkInstance extends Routable {
 		}
 	}
 	
+	private void loadMimeTypes() {
+		if (mimeTypes != null) return;
+		mimeTypes = new Properties();
+		InputStream is = this.getClass().getResourceAsStream(MIME_TYPES_PROPERTY_FILE);
+		if (is == null)
+			is = this.getClass().getClassLoader().getResourceAsStream(MIME_TYPES_PROPERTY_FILE);
+		if (is == null) throw new ASparkException("File \"mime-types.properties\" not found.");
+		try {
+			mimeTypes.load(is);
+		} catch (IOException e) {
+			throw new ASparkException("Could not load file \"mime-types.properties\"");
+		}
+	}
+	
 	public synchronized void staticFileLocation(String folder) {
+		staticFileLocation(folder, DEFAULT_STATIC_RESOURCE_INDEX);
+	}
+	
+	public synchronized void staticFileLocation(String folder, String[] indexFiles) {
 		if (started)
 			throw new ASparkException(BEFORE_MAPPING_ERROR_MESSAGE);
 		requireNonNull(folder,"Path can't be null");
-		location = new StaticResourceLocation(folder, DEFAULT_STATIC_RESOURCE_CONFIGURATION);
+		location = new StaticResourceLocation(folder, indexFiles);
+		loadMimeTypes();
+	}
+	
+	public void staticFileLocationACL(String path, boolean allow) {
+		if (location == null)
+			throw new ASparkException("Static file location not set");
+		ACLEntry entry = new ACLEntry(buildPathPattern(path), allow);
+		location.aclEntry(entry);
 	}
 	
 	public synchronized void externalStaticFileLocation(String externalFolder) {
+		externalStaticFileLocation(externalFolder, DEFAULT_STATIC_RESOURCE_INDEX);
+	}
+	
+	public synchronized void externalStaticFileLocation(String externalFolder, String[] indexFiles) {
 		if (started)
 			throw new ASparkException(BEFORE_MAPPING_ERROR_MESSAGE);
 		requireNonNull(externalFolder,"Path can't be null");
-		externalLocation = new StaticResourceLocation(externalFolder, DEFAULT_STATIC_RESOURCE_CONFIGURATION);
+		externalLocation = new StaticResourceLocation(externalFolder, indexFiles);
+		loadMimeTypes();
+	}
+	
+	public void externalStaticFileLocationACL(String path, boolean allow) {
+		if (externalLocation == null)
+			throw new ASparkException("External static file location not set");
+		ACLEntry entry = new ACLEntry(buildPathPattern(path), allow);
+		externalLocation.aclEntry(entry);
 	}
 	
 	public void exception(Class<? extends Exception> exceptionClass, ExceptionHandler handler) {
@@ -190,8 +233,9 @@ public class ASparkInstance extends Routable {
 						externalLocation,
 						exceptionMap,
 						webSockets,
-						sslContext
-						);
+						sslContext,
+						serverName,
+						mimeTypes);
 			}).start();
 			started = true;
 		}
@@ -218,10 +262,12 @@ public class ASparkInstance extends Routable {
 		requireNonNull(handler,"Handler can't be null");
 		requireNonNull(responseTransformer,"Response transformer can't be null");
 		Map<String, Integer> parameterNamesMap = new HashMap<>();
-		Pattern pathPattern = buildPathPattern(path, parameterNamesMap);
+		Boolean startWithWildcard = new Boolean(false);
+		Pattern pathPattern = buildParameterizedPathPattern(path, parameterNamesMap, startWithWildcard);
 		Route route = new Route(httpMethod,
 				pathPattern,
 				parameterNamesMap,
+				startWithWildcard,
 				acceptedType,
 				handler,
 				responseTransformer);
@@ -238,9 +284,11 @@ public class ASparkInstance extends Routable {
 		requireNonNull(acceptedType,"Accepted type can't be null");
 		requireNonNull(handler,"Handler can't be null");
 		Map<String, Integer> parameterNamesMap = new HashMap<>();
-		Pattern pathPattern = buildPathPattern(path, parameterNamesMap);
+		Boolean startWithWildcard = new Boolean(false);
+		Pattern pathPattern = buildParameterizedPathPattern(path, parameterNamesMap, startWithWildcard);
 		Filter filter = new Filter(pathPattern,
 				parameterNamesMap,
+				startWithWildcard,
 				acceptedType,
 				handler);
 		if (before)
@@ -284,5 +332,13 @@ public class ASparkInstance extends Routable {
 		requireNonNull(handler,"Handler can't be null");
 		webSockets.add(path, handler);
 	}
-
+	
+	public void serverName(String serverName) {
+		requireNonNull(serverName,"Server name can't be null;");
+		this.serverName = serverName;
+	}
+	
+	public String serverName() {
+		return serverName;
+	}
 }

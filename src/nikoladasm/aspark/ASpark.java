@@ -20,6 +20,15 @@ package nikoladasm.aspark;
 
 public final class ASpark {
 
+	public static final RequestTransformer<String> DEFAULT_REQUEST_TRANSFORMER =
+		ASparkInstance.DEFAULT_REQUEST_TRANSFORMER;
+	
+	public static final ResponseTransformer DEFAULT_RESPONSE_TRANSFORMER =
+		ASparkInstance.DEFAULT_RESPONSE_TRANSFORMER;
+	
+	public static final ViewEngine DEFAULT_VIEW_ENGINE =
+		ASparkInstance.DEFAULT_VIEW_ENGINE;
+	
 	private static class SingletonHolder {
 		private static final ASparkInstance INSTANCE = new ASparkInstance();
 	}
@@ -82,10 +91,26 @@ public final class ASpark {
 		getInstance().staticFileLocation(folder);
 	}
 
+	public static void staticFileLocation(String folder, String[] indexFiles) {
+		getInstance().staticFileLocation(folder, indexFiles);
+	}
+	
+	public static void staticFileLocationACL(String path, boolean allow) {
+		getInstance().staticFileLocationACL(path, allow);
+	}
+	
 	public static void externalStaticFileLocation(String externalFolder) {
 		getInstance().externalStaticFileLocation(externalFolder);
 	}
+	
+	public static void externalStaticFileLocation(String externalFolder, String[] indexFiles) {
+		getInstance().externalStaticFileLocation(externalFolder, indexFiles);
+	}
 
+	public static void externalStaticFileLocationACL(String path, boolean allow) {
+		getInstance().externalStaticFileLocationACL(path, allow);
+	}
+	
 	public static void exception(Class<? extends Exception> exceptionClass, ExceptionHandler handler) {
 		getInstance().exception(exceptionClass, handler);
 	}
@@ -119,6 +144,10 @@ public final class ASpark {
 	
 	public static void clearAfter() {
 		getInstance().clearAfter();
+	}
+
+	public static void defaultResponseTransformer(ResponseTransformer responseTransformer) {
+		getInstance().defaultResponseTransformer(responseTransformer);
 	}
 	
 	public static void before(FilterHandler handler) {

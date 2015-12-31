@@ -25,6 +25,7 @@ public final class Route {
 	private HttpMethod httpMethod;
 	private Pattern pathPattern;
 	private Map<String, Integer> parameterNamesMap;
+	private Boolean startWithWildcard;
 	private String acceptedType;
 	private RouteHandler handler;
 	private ResponseTransformer responseTransformer;
@@ -32,12 +33,14 @@ public final class Route {
 	public Route(HttpMethod httpMethod,
 			Pattern pathPattern,
 			Map<String, Integer> parameterNamesMap,
+			Boolean startWithWildcard,
 			String acceptedType,
 			RouteHandler handler,
 			ResponseTransformer responseTransformer) {
 		this.httpMethod = httpMethod;
 		this.pathPattern = pathPattern;
 		this.parameterNamesMap = parameterNamesMap;
+		this.startWithWildcard = startWithWildcard;
 		this.acceptedType = acceptedType;
 		this.handler = handler;
 		this.responseTransformer = responseTransformer;
@@ -53,6 +56,10 @@ public final class Route {
 
 	public Map<String, Integer> parameterNamesMap() {
 		return parameterNamesMap;
+	}
+	
+	public Boolean startWithWildcard() {
+		return startWithWildcard;
 	}
 
 	public String acceptedType() {

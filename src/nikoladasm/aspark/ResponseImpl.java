@@ -27,6 +27,9 @@ import io.netty.handler.codec.http.FullHttpResponse;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -37,8 +40,8 @@ import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.DefaultFullHttpResponse;
 
-import static nikoladasm.aspark.ASparkUtil.*;
 import static nikoladasm.aspark.HttpMethod.*;
+import static nikoladasm.aspark.ASparkUtil.*;
 
 public class ResponseImpl implements Response {
 	
@@ -52,11 +55,13 @@ public class ResponseImpl implements Response {
 	private Map<String, Cookie> cookies;
 	private InputStream stream;
 	private HttpMethod httpMethod;
+	private String serverName;
 	
 	ResponseImpl(ChannelHandlerContext ctx,
 			HttpVersion version,
 			boolean keepAlive,
-			HttpMethod httpMethod) {
+			HttpMethod httpMethod,
+			String serverName) {
 		this.ctx = ctx;
 		this.version = version;
 		this.keepAlive = keepAlive;
@@ -64,38 +69,61 @@ public class ResponseImpl implements Response {
 		headers = new HashMap<>();
 		cookies = new HashMap<>();
 		this.httpMethod = httpMethod;
+		this.serverName = serverName;
 	}
 	
 	public void transformer(ResponseTransformer transformer) {
 		this.transformer = transformer;
 	}
 	
+	public ResponseTransformer transformer() {
+		return transformer;
+	}
+	
 	public void inputStream(InputStream stream) {
 		this.stream = stream;
+	}
+
+	public InputStream inputStream() {
+		return stream;
 	}
 
 	public void send() throws Exception {
 		FullHttpResponse response =
 			new DefaultFullHttpResponse(version, status);
-		headers.forEach((key, value) ->
-			response.headers().add(key, value));
-		cookies.forEach((name, cookie) ->
-			response.headers().add(SET_COOKIE, ServerCookieEncoder.LAX.encode(cookie)));
-		if(!headers.containsKey(CONTENT_TYPE))
-			response.headers().set(CONTENT_TYPE, "text/plain; charset=UTF-8");
+		setHeades(response);
 		if (stream != null)
 			sendStream(response);
 		else
 			sendByteArray(response);
 		response.headers().set(CONTENT_LENGTH, response.content().readableBytes());
+		cookies.forEach((name, cookie) ->
+			response.headers().add(SET_COOKIE, ServerCookieEncoder.LAX.encode(cookie)));
 		if (httpMethod.equals(HEAD))
 			response.content().clear();
 		if (!keepAlive) {
-			ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
+			ctx.channel().writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
 		} else {
-			response.headers().set(CONNECTION, KEEP_ALIVE);
-			ctx.writeAndFlush(response);
+			ctx.channel().writeAndFlush(response);
 		}
+	}
+	
+	private void setHeades(FullHttpResponse response) {
+		headers.forEach((key, value) ->
+		response.headers().add(key, value));
+		if(!headers.containsKey(CONTENT_TYPE))
+			response.headers().set(CONTENT_TYPE, "text/plain; charset=UTF-8");
+		if(!headers.containsKey(SERVER))
+			response.headers().set(SERVER, serverName);
+		if(!headers.containsKey(DATE)) {
+			final String httpDate =
+				DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneOffset.UTC));
+			response.headers().set(DATE, httpDate);
+		}
+		if(!headers.containsKey(VARY))
+			response.headers().set(VARY, "Accept-Encoding");
+		if (keepAlive)
+			response.headers().set(CONNECTION, KEEP_ALIVE);
 	}
 	
 	private void sendByteArray(FullHttpResponse response) throws Exception {

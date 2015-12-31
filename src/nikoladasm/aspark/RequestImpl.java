@@ -46,14 +46,17 @@ public class RequestImpl implements Request {
 	private FullHttpRequest request;
 	private Map<String, String> params;
 	private Map<String, Integer> parameterNamesMap;
+	private Boolean startWithWildcard;
 	private Matcher parameterMatcher;
 	private HttpMethod requestMethod;
 	private HttpMethod method;
+	private Map<String, List<String>> postAttr;
 	private String path;
 	private byte[] bodyAsBytes;
 	private QueryStringDecoder queryStringDecoder;
 	private Set<String> headers;
-	private QueryParamsMap queryMap;
+	private ParamsMap queryMap;
+	private ParamsMap postMap;
 	private Map<String, Cookie> fullCookies;
 	private Map<String, String> cookies;
 	private SAttributeMap attributeMap;
@@ -66,6 +69,7 @@ public class RequestImpl implements Request {
 			QueryStringDecoder queryStringDecoder,
 			HttpMethod requestMethod,
 			HttpMethod method,
+			Map<String, List<String>> postAttr,
 			String path,
 			int port,
 			String ipAddress,
@@ -74,6 +78,7 @@ public class RequestImpl implements Request {
 		this.queryStringDecoder = queryStringDecoder;
 		this.requestMethod = requestMethod;
 		this.method = method;
+		this.postAttr = postAttr;
 		this.nettyHeaders = request.headers();
 		this.path = path;
 		this.port = port;
@@ -86,8 +91,16 @@ public class RequestImpl implements Request {
 		this.parameterNamesMap = parameterNamesMap;
 	}
 	
+	public void startWithWildcard(Boolean startWithWildcard) {
+		this.startWithWildcard = startWithWildcard;
+	}
+	
 	public void parameterMatcher(Matcher parameterMatcher) {
 		this.parameterMatcher = parameterMatcher;
+	}
+	
+	private int parameterIndex(int index) {
+		return startWithWildcard ? index+1 : index;
 	}
 	
 	@Override
@@ -95,7 +108,7 @@ public class RequestImpl implements Request {
 		if (params != null) {
 			params = new HashMap<>();
 			parameterNamesMap.forEach((name, index) -> {
-				params.put(name, parameterMatcher.group(index));
+				params.put(name, parameterMatcher.group(parameterIndex(index)));
 			});
 		}
 		return params;
@@ -107,11 +120,13 @@ public class RequestImpl implements Request {
 		if (params != null) return params.get(name);
 		Integer index = parameterNamesMap.get(name);
 		if (index == null) return null;
-		return parameterMatcher.group(index);
+		return parameterMatcher.group(parameterIndex(index));
 	}
 	
 	@Override
 	public String[] splat() {
+		if (startWithWildcard && parameterMatcher.group(0) != null)
+			return parameterMatcher.group(0).split("/");
 		if (parameterMatcher.groupCount() > parameterNamesMap.size())
 			return parameterMatcher.group(parameterNamesMap.size()+1).split("/");
 		else
@@ -196,24 +211,8 @@ public class RequestImpl implements Request {
 	}
 	
 	@Override
-	public String headers(String header) {
-		return nettyHeaders.get(header);
-	}
-	
-	@Override
 	public Set<String> queryParams() {
 		return queryStringDecoder.parameters().keySet();
-	}
-	
-	@Override
-	public Set<String> headers() {
-		if (headers == null) {
-			headers = new HashSet<>();
-			nettyHeaders.forEach((entry) -> {
-				headers.add(entry.getKey());
-			});
-		}
-		return headers;
 	}
 	
 	@Override
@@ -226,20 +225,70 @@ public class RequestImpl implements Request {
 	}
 	
 	@Override
-	public QueryParamsMap queryMap() {
+	public ParamsMap queryMap() {
 		initQueryMap();
 		return queryMap;
 	}
 	
 	@Override
-	public QueryParamsMap queryMap(String key) {
+	public ParamsMap queryMap(String key) {
 		initQueryMap();
 		return queryMap().get(key);
 	}
 	
 	private void initQueryMap() {
 		if (queryMap == null)
-			queryMap = parseQueryParams(queryStringDecoder.parameters());
+			queryMap = parseParams(queryStringDecoder.parameters());
+	}
+	
+	@Override
+	public String postParams(String postParam) {
+		List<String> valueList = postAttr.get(postParam);
+		return (valueList == null) ? null : valueList.get(0);
+	}
+	
+	@Override
+	public String[] postParamsValues(String postParam) {
+		List<String> valueList = postAttr.get(postParam);
+		return (valueList == null) ? null : valueList.toArray(new String[valueList.size()]);
+	}
+	
+	@Override
+	public Set<String> postParams() {
+		return postAttr.keySet();
+	}
+	
+	@Override
+	public ParamsMap postMap() {
+		initPostMap();
+		return postMap;
+	}
+	
+	@Override
+	public ParamsMap postMap(String key) {
+		initPostMap();
+		return postMap().get(key);
+	}
+	
+	private void initPostMap() {
+		if (postMap == null)
+			postMap = parseParams(postAttr);
+	}
+	
+	@Override
+	public String headers(String header) {
+		return nettyHeaders.get(header);
+	}
+	
+	@Override
+	public Set<String> headers() {
+		if (headers == null) {
+			headers = new HashSet<>();
+			nettyHeaders.forEach((entry) -> {
+				headers.add(entry.getKey());
+			});
+		}
+		return headers;
 	}
 	
 	@Override

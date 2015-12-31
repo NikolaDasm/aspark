@@ -18,8 +18,20 @@
 
 package nikoladasm.aspark;
 
-import java.io.InputStream;
+import java.io.File;
+import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
@@ -35,6 +47,8 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.http.*;
+import io.netty.handler.codec.http.multipart.*;
+import io.netty.handler.codec.http.multipart.InterfaceHttpData.HttpDataType;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
 import io.netty.handler.ssl.SslHandler;
 import io.netty.handler.stream.ChunkedWriteHandler;
@@ -42,17 +56,17 @@ import io.netty.util.AttributeKey;
 import io.netty.util.CharsetUtil;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
+import nikoladasm.aspark.StaticResourceLocation.StaticResource;
 import io.netty.handler.codec.http.websocketx.*;
 
 import static nikoladasm.aspark.ASparkUtil.*;
 import static nikoladasm.aspark.HttpMethod.*;
-import static nikoladasm.aspark.Routable.*;
+import static nikoladasm.aspark.ASparkInstance.*;
 
 import static io.netty.handler.codec.http.HttpHeaders.Names.*;
 import static io.netty.handler.codec.http.HttpHeaders.Values.KEEP_ALIVE;
 import static io.netty.handler.codec.http.HttpHeaders.*;
-import static io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST;
-import static io.netty.handler.codec.http.HttpResponseStatus.INTERNAL_SERVER_ERROR;
+import static io.netty.handler.codec.http.HttpResponseStatus.*;
 import static io.netty.handler.codec.http.HttpVersion.*;
 
 public class ASparkServer {
@@ -60,6 +74,7 @@ public class ASparkServer {
 	private static final InternalLogger LOG = InternalLoggerFactory.getInstance(nikoladasm.aspark.ASparkServer.class);
 
 	private static final int DEFAULT_MAX_CONTENT_LENGTH = 20480;
+	private static final int HTTP_CACHE_SECONDS = 60;
 	private static final AttributeKey<WebSocketServerHandshaker> HANDSHAKER_ATTR_KEY =
 		AttributeKey.valueOf("HANDSHAKER");
 	private static final AttributeKey<WebSocketHandler> WEBSOCKET_HANDLER_ATTR_KEY =
@@ -78,6 +93,8 @@ public class ASparkServer {
 	private int maxContentLength;
 	private SSLContext sslContext;
 	private CountDownLatch latch;
+	private String serverName;
+	private Properties mimeTypes;
 	
 	private Channel channel;
 	private EventLoopGroup bossGroup;
@@ -103,7 +120,7 @@ public class ASparkServer {
 			pipeline.addLast("httpCodec", new HttpServerCodec());
 			pipeline.addLast("inflater", new HttpContentDecompressor());
 			pipeline.addLast("deflater", new HttpContentCompressor());
-			pipeline.addLast("chunkWriter", new ChunkedWriteHandler());
+			pipeline.addLast("chunkedWriter", new ChunkedWriteHandler());
 			pipeline.addLast("aggregator", new HttpObjectAggregator(maxContentLength));
 			pipeline.addLast("handler", new ServerHandler());
 		}
@@ -134,7 +151,7 @@ public class ASparkServer {
 		if (decoderResult) {
 			String uri = QueryStringDecoder.decodeComponent(nettyRequest.getUri(), CharsetUtil.UTF_8);
 			QueryStringDecoder queryStringDecoder = new QueryStringDecoder(uri);
-			String path = queryStringDecoder.path();
+			String path = sanitizePath(queryStringDecoder.path());
 			String httpMethodOverrideName = nettyRequest.headers().get("X-HTTP-Method-Override");
 			String httpMethodName =
 				(httpMethodOverrideName == null) ? nettyRequest.getMethod().name() : httpMethodOverrideName;
@@ -143,10 +160,12 @@ public class ASparkServer {
 			HttpMethod originalRequestMethod =
 					HttpMethod.valueOf(nettyRequest.getMethod().name().toUpperCase());
 			String acceptType = nettyRequest.headers().get(ACCEPT);
+			Map<String, List<String>> postAttr = getPostAttributes(originalRequestMethod, nettyRequest);
 			RequestImpl request = new RequestImpl(nettyRequest,
 					queryStringDecoder,
 					originalRequestMethod,
 					requestMethod,
+					postAttr,
 					path,
 					port,
 					ipAddress,
@@ -154,7 +173,8 @@ public class ASparkServer {
 			ResponseImpl response = new ResponseImpl(ctx,
 					version,
 					keepAlive,
-					requestMethod);
+					requestMethod,
+					serverName);
 			pool.execute(() -> {
 				try {
 					boolean processed =
@@ -164,24 +184,17 @@ public class ASparkServer {
 							nettyRequest,
 							ctx);
 					if (processed) return;
-					processed =
-						processFiltersAndRoutes(
-								path,
-								acceptType,
-								request,
-								response,
-								requestMethod);
-					if (!processed) {
-						processStaticResources(
-								path,
-								response,
-								requestMethod);
-					}
+					processRequest(
+							path,
+							acceptType,
+							request,
+							response,
+							requestMethod);
 					response.send();
 				} catch (Exception e) {
 					LOG.warn("Exception ", e);
 					if (e instanceof HaltException) {
-						sendErrorResponse(ctx,
+						sendResponse(ctx,
 								version,
 								HttpResponseStatus.valueOf(((HaltException) e).status()),
 								keepAlive,
@@ -192,21 +205,27 @@ public class ASparkServer {
 					if (handler != null) {
 						handler.handle(e, request, response);
 						try {
+							if (response.inputStream() != null) {
+								response.inputStream().close();
+								response.inputStream(null);
+								if (response.transformer() == null)
+									response.transformer(DEFAULT_RESPONSE_TRANSFORMER);
+							}
 							response.send();
 						} catch (Exception exc) {
-							sendErrorResponse(ctx, version, INTERNAL_SERVER_ERROR, keepAlive, null);
+							sendResponse(ctx, version, INTERNAL_SERVER_ERROR, keepAlive, null);
 						}
 						return;
 					}
-					sendErrorResponse(ctx, version, INTERNAL_SERVER_ERROR, keepAlive, null);
+					sendResponse(ctx, version, INTERNAL_SERVER_ERROR, keepAlive, null);
 				}
 			});
 		} else {
-			sendErrorResponse(ctx, version, BAD_REQUEST, keepAlive, null);
+			sendResponse(ctx, version, BAD_REQUEST, keepAlive, null);
 		}
 	}
 	
-	private void sendErrorResponse(
+	private void sendResponse(
 			ChannelHandlerContext ctx,
 			HttpVersion version,
 			HttpResponseStatus status,
@@ -217,15 +236,40 @@ public class ASparkServer {
 					status,
 					Unpooled.copiedBuffer((body == null) ? "" : body, CharsetUtil.UTF_8));
 		response.headers().set(CONTENT_TYPE, "text/plain; charset=UTF-8");
+		response.headers().set(CONTENT_LENGTH, response.content().readableBytes());
 		if (!keepAlive) {
-			ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
+			ctx.channel().writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
 		} else {
 			response.headers().set(CONNECTION, KEEP_ALIVE);
-			ctx.writeAndFlush(response);
+			ctx.channel().writeAndFlush(response);
 		}
 	}
 	
-	private boolean processFiltersAndRoutes(
+	private Map<String, List<String>> getPostAttributes(HttpMethod requestMethod,
+			FullHttpRequest request) {
+		if (!requestMethod.equals(POST)) return null;
+		final HttpPostRequestDecoder decoder = new HttpPostRequestDecoder(request);
+		final Map<String, List<String>> map = new HashMap<String, List<String>>();
+		try {
+			for (InterfaceHttpData data : decoder.getBodyHttpDatas()) {
+				if (data.getHttpDataType() == HttpDataType.Attribute) {
+					Attribute attribute = (Attribute) data;
+					List<String> list = map.get(attribute.getName());
+					if (list == null) {
+						list = new LinkedList<String>();
+						map.put(attribute.getName(), list);
+					}
+					list.add(attribute.getValue());
+				}
+			}
+		} catch (IOException e) {
+			throw new IllegalStateException("Cannot parse http request data", e);		} finally {
+			decoder.destroy();
+		}
+		return Collections.unmodifiableMap(map);
+	}
+	
+	private boolean processRequest(
 			String path,
 			String acceptType,
 			RequestImpl request,
@@ -236,30 +280,31 @@ public class ASparkServer {
 			if(isAcceptContentType(acceptType, filter.acceptedType()) &&
 				parameterMatcher.matches()) {
 				request.parameterNamesMap(filter.parameterNamesMap());
+				request.startWithWildcard(filter.startWithWildcard());
 				request.parameterMatcher(parameterMatcher);
 				filter.handler().handle(request, response);
 			}
 		}
-		boolean routeFound = false;
-		for (Route route : routes) {
-			Matcher parameterMatcher = route.pathPattern().matcher(path);
-			if(isEqualHttpMethod(requestMethod, route.httpMethod()) &&
-				isAcceptContentType(acceptType, route.acceptedType()) &&
-				parameterMatcher.matches()) {
-				request.parameterNamesMap(route.parameterNamesMap());
-				request.parameterMatcher(parameterMatcher);
-				response.transformer(route.responseTransformer());
-				Object body = route.handler().handle(request, response);
-				response.body(body);
-				routeFound = true;
-				break;
-			}
+		boolean routeFound =
+			processRoutes(
+					path,
+					acceptType,
+					request,
+					response,
+					requestMethod);
+		if (!routeFound) {
+			routeFound = processStaticResources(
+					path,
+					request,
+					response,
+					requestMethod);
 		}
 		for (Filter filter : after) {
 			Matcher parameterMatcher = filter.pathPattern().matcher(path);
 			if(isAcceptContentType(acceptType, filter.acceptedType()) &&
 				parameterMatcher.matches()) {
 				request.parameterNamesMap(filter.parameterNamesMap());
+				request.startWithWildcard(filter.startWithWildcard());
 				request.parameterMatcher(parameterMatcher);
 				filter.handler().handle(request, response);
 			}
@@ -271,22 +316,68 @@ public class ASparkServer {
 		return routeFound;
 	}
 	
+	private boolean processRoutes(
+			String path,
+			String acceptType,
+			RequestImpl request,
+			ResponseImpl response,
+			HttpMethod requestMethod) throws Exception {
+		for (Route route : routes) {
+			Matcher parameterMatcher = route.pathPattern().matcher(path);
+			if(isEqualHttpMethod(requestMethod, route.httpMethod()) &&
+				isAcceptContentType(acceptType, route.acceptedType()) &&
+				parameterMatcher.matches()) {
+				request.parameterNamesMap(route.parameterNamesMap());
+				request.startWithWildcard(route.startWithWildcard());
+				request.parameterMatcher(parameterMatcher);
+				response.transformer(route.responseTransformer());
+				Object body = route.handler().handle(request, response);
+				response.body(body);
+				return true;
+			}
+		}
+		return false;
+	}
+	
 	private boolean processStaticResources(
 			String path,
+			RequestImpl request,
 			ResponseImpl response,
-			HttpMethod requestMethod) {
+			HttpMethod requestMethod) throws IOException {
 		if (!isEqualHttpMethod(requestMethod, GET))
 			return false;
-		InputStream input = null;
 		if (this.location != null) {
-			input = this.location.getClassInputStream(path);
+			StaticResource resource = this.location.getClassResource(path);
+			if (resource.stream() != null) {
+				response.inputStream(resource.stream());
+				response.header(CONTENT_TYPE, mimeType(resource.fullPath(), mimeTypes));
+				return true;
+			}
 		}
-		if (input == null && this.externalLocation != null) {
-			input = this.externalLocation.getFileInputStream(path);
-		}
-		if (input != null) {
-			response.inputStream(input);
-			response.status(200);
+		if (this.externalLocation != null) {
+			StaticResource resource = this.externalLocation.getFileResource(path);
+			if (resource.stream() == null) return false;
+			File file = new File(resource.fullPath());
+			String ifModifiedSince = request.headers(IF_MODIFIED_SINCE);
+			if (ifModifiedSince != null && !ifModifiedSince.isEmpty()) {
+				long ifModifiedSinceDateSeconds =
+					ZonedDateTime.parse(ifModifiedSince, DateTimeFormatter.RFC_1123_DATE_TIME).toEpochSecond();
+				long fileLastModifiedSeconds = file.lastModified() / 1000;
+				if (ifModifiedSinceDateSeconds == fileLastModifiedSeconds) {
+					response.transformer(DEFAULT_RESPONSE_TRANSFORMER);
+					response.status(304);
+					return true;
+				}
+			}
+			response.inputStream(resource.stream());
+			response.header(CONTENT_TYPE, mimeType(resource.fullPath(), mimeTypes));
+			final String cacheExpires =
+				DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneOffset.UTC).plusSeconds(HTTP_CACHE_SECONDS));
+			response.header(EXPIRES, cacheExpires);
+			response.header(CACHE_CONTROL, "private, max-age=" + HTTP_CACHE_SECONDS);
+			final String lastModified =
+				DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.ofInstant(Instant.ofEpochMilli(file.lastModified()), ZoneId.of("GMT")));
+			response.header(LAST_MODIFIED, lastModified);
 			return true;
 		}
 		return false;
@@ -423,7 +514,9 @@ public class ASparkServer {
 			ExceptionMap exceptionMap,
 			WebSocketMap webSockets,
 			SSLContext sslContext,
-			int maxContentLength) {
+			int maxContentLength,
+			String serverName,
+			Properties mimeTypes) {
 		this.pool = pool;
 		this.latch = latch;
 		this.ipAddress = ipAddress;
@@ -437,6 +530,8 @@ public class ASparkServer {
 		this.webSockets = webSockets;
 		this.sslContext = sslContext;
 		this.maxContentLength = maxContentLength;
+		this.serverName = serverName;
+		this.mimeTypes = (mimeTypes == null) ? new Properties() : mimeTypes;
 		start();
 	}
 	
@@ -451,7 +546,9 @@ public class ASparkServer {
 			StaticResourceLocation externalLocation,
 			ExceptionMap exceptionMap,
 			WebSocketMap webSockets,
-			SSLContext sslContext) {
+			SSLContext sslContext,
+			String serverName,
+			Properties mimeTypes) {
 		this(
 				latch,
 				pool,
@@ -465,7 +562,9 @@ public class ASparkServer {
 				exceptionMap,
 				webSockets,
 				sslContext,
-				DEFAULT_MAX_CONTENT_LENGTH);
+				DEFAULT_MAX_CONTENT_LENGTH,
+				serverName,
+				mimeTypes);
 	}
 	
 	ASparkServer(CountDownLatch latch,
@@ -479,7 +578,9 @@ public class ASparkServer {
 			StaticResourceLocation externalLocation,
 			ExceptionMap exceptionMap,
 			WebSocketMap webSockets,
-			int maxContentLength) {
+			int maxContentLength,
+			String serverName,
+			Properties mimeTypes) {
 		this(
 				latch,
 				pool,
@@ -493,7 +594,9 @@ public class ASparkServer {
 				exceptionMap,
 				webSockets,
 				null,
-				maxContentLength);
+				maxContentLength,
+				serverName,
+				mimeTypes);
 	}
 	
 	ASparkServer(CountDownLatch latch,
@@ -506,7 +609,9 @@ public class ASparkServer {
 			StaticResourceLocation location,
 			StaticResourceLocation externalLocation,
 			ExceptionMap exceptionMap,
-			WebSocketMap webSockets) {
+			WebSocketMap webSockets,
+			String serverName,
+			Properties mimeTypes) {
 		this(
 				latch,
 				pool,
@@ -520,7 +625,9 @@ public class ASparkServer {
 				exceptionMap,
 				webSockets,
 				null,
-				DEFAULT_MAX_CONTENT_LENGTH);
+				DEFAULT_MAX_CONTENT_LENGTH,
+				serverName,
+				mimeTypes);
 	}
 	
 	private void start() {
@@ -532,6 +639,7 @@ public class ASparkServer {
 				.channel(NioServerSocketChannel.class)
 				.childHandler(new ServerInitializer())
 				.option(ChannelOption.SO_BACKLOG, 1024)
+				.option(ChannelOption.SO_KEEPALIVE, true)
 				.option(ChannelOption.TCP_NODELAY, true)
 				.childOption(ChannelOption.SO_KEEPALIVE, true)
 				.childOption(ChannelOption.TCP_NODELAY, true);
@@ -547,12 +655,15 @@ public class ASparkServer {
 	}
 	
 	public void stop() {
-		if (channel != null)
-			channel.close().syncUninterruptibly();
-		LOG.info("Netty server stoped");
+		if (channel == null) return;
+		channel.close().syncUninterruptibly();
+		bossGroup.shutdownGracefully();
+		workerGroup.shutdownGracefully();
+		LOG.info("Netty server stopped");
 	}
 	
 	public void await() {
+		if (channel == null) return;
 		try {
 			channel.closeFuture().sync();
 		} catch (InterruptedException e) {

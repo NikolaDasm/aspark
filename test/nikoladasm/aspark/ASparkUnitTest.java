@@ -642,6 +642,17 @@ public class ASparkUnitTest {
 	}
 	
 	@Test
+	public void shouldBeApplayDenyACL() throws Exception {
+		before("*.abc", (request, response) -> {
+			halt(401, "Empty");
+		});
+		
+		C.get(PATH+"/123.abc", clResTr);
+		assertThat(clientResponse, is(notNullValue()));
+		assertThat(clientResponse.status(), is(equalTo(401)));
+	}
+	
+	@Test
 	public void shouldBeNotFound() throws Exception {
 		C.get(PATH+"/no/resource", clResTr);
 		assertThat(clientResponse, is(notNullValue()));

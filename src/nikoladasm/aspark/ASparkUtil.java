@@ -24,6 +24,7 @@ import java.util.Deque;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -47,19 +48,36 @@ public final class ASparkUtil {
 	
 	private ASparkUtil() {}
 	
-	public static Pattern buildPathPattern(String path, Map<String, Integer> parameterNamesMap) {
-		String pathAfterTest = new String(path);
-		int length = pathAfterTest.length();
+	private static String processRegexPath(String path, String asteriskReplacement) {
+		String pathToUse = sanitizePath(path);
+		int length = pathToUse.length();
+		StringBuilder sb = new StringBuilder();
+		boolean startWithWildcard = false;
 		for (int i = 0; i < length; i++) {
-			char c = pathAfterTest.charAt(i);
-			if (i == length-1 && c == '*') {
-				pathAfterTest = path.replace("*", "(.*)");
-				break;
+			char c = pathToUse.charAt(i);
+			if (i == 0 && c == '*') {
+				sb.append(asteriskReplacement);
+				startWithWildcard = true;
+				continue;
 			}
-			if (REGEXP_METACHARS.contains(String.valueOf(c)))
-				throw new IllegalArgumentException("Path can't contain regexp metachars");
+			if (i == length-1 && c == '*') {
+				if (startWithWildcard)
+					throw new IllegalArgumentException("Path can't contain first and last star wildcard");
+				sb.append(asteriskReplacement);
+				continue;
+			}
+			if (REGEXP_METACHARS.contains(String.valueOf(c))) {
+				sb.append('\\').append(c);
+				continue;
+			}
+			sb.append(c);
 		}
-		Matcher parameterMatcher = PATTERN.matcher(pathAfterTest);
+		return sb.toString();
+	}
+	
+	public static Pattern buildParameterizedPathPattern(String path, Map<String, Integer> parameterNamesMap, Boolean startWithWildcard) {
+		String pathToUse = processRegexPath(path, "(.*)");
+		Matcher parameterMatcher = PATTERN.matcher(pathToUse);
 		int i = 1;
 		while (parameterMatcher.find()) {
 			String parameterName = parameterMatcher.group(1);
@@ -69,6 +87,11 @@ public final class ASparkUtil {
 			i++;
 		}
 		return Pattern.compile("^"+parameterMatcher.replaceAll("([^/]+)")+"$");
+	}
+	
+	public static Pattern buildPathPattern(String path) {
+		String pathToUse = processRegexPath(path, ".*");
+		return Pattern.compile("^"+pathToUse+"$");
 	}
 	
 	public static boolean isAcceptContentType(String requestAcceptTypes,
@@ -98,7 +121,9 @@ public final class ASparkUtil {
 	}
 	
 	public static String collapsePath(String path) {
-		String rpath = path.replace(WINDOWS_FOLDER_SEPARATOR, FOLDER_SEPARATOR);
+		String pathToUse = path.trim();
+		if (pathToUse.isEmpty()) return pathToUse;
+		String rpath = pathToUse.replace(WINDOWS_FOLDER_SEPARATOR, FOLDER_SEPARATOR);
 		String[] directories = rpath.split(FOLDER_SEPARATOR);
 		Deque<String> newDirectories = new LinkedList<>();
 		for (int i=0; i<directories.length; i++) {
@@ -125,10 +150,10 @@ public final class ASparkUtil {
 		return requestHttpMethod.equals(routeHttpMethod);
 	}
 	
-	public static QueryParamsMap parseQueryParams(Map<String, List<String>> params) {
-		QueryParamsMap result = new QueryParamsMap();
+	public static ParamsMap parseParams(Map<String, List<String>> params) {
+		ParamsMap result = new ParamsMap();
 		params.forEach((keys, values) -> {
-			QueryParamsMap root = result;
+			ParamsMap root = result;
 			Matcher keyMatcher = QK_PATTERN.matcher(keys);
 			while (keyMatcher.find()) {
 				String key = keyMatcher.group(1);
@@ -137,5 +162,19 @@ public final class ASparkUtil {
 			root.values(values.toArray(new String[values.size()]));
 		});
 		return result;
+	}
+	
+	public static String sanitizePath(String path) {
+		String pathToUse = collapsePath(path);
+		if (pathToUse.isEmpty()) return pathToUse;
+		if (pathToUse.endsWith("/")) pathToUse = pathToUse.substring(0, pathToUse.length()-1);
+		return pathToUse;
+	}
+	
+	public static String mimeType(String file, Properties mimeTypes) {
+		int extIndex = file.lastIndexOf('.');
+		extIndex = (extIndex < 0 ) ? 0 : extIndex;
+		String ext = file.substring(extIndex);
+		return mimeTypes.getProperty(ext, "application/octet-stream");
 	}
 }

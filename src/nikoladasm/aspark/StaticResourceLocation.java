@@ -18,81 +18,108 @@
 
 package nikoladasm.aspark;
 
-import static nikoladasm.aspark.ASparkUtil.collapsePath;
+import static nikoladasm.aspark.ASparkUtil.*;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.InputStream;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class StaticResourceLocation {
-	private String folder;
-	private String[][] configuration;
+
+	public static class StaticResource {
+		private InputStream stream;
+		private String fullPath;
+		
+		public StaticResource(InputStream stream, String fullPath) {
+			this.stream = stream;
+			this.fullPath = fullPath;
+		}
+		
+		public InputStream stream() {
+			return stream;
+		}
+		
+		public String fullPath() {
+			return fullPath;
+		}
+	}
 	
-	public StaticResourceLocation(String folder, String[][] configuration) {
-		String pathToUse = collapsePath(folder);
-		if (pathToUse.endsWith("/")) pathToUse = pathToUse.substring(0, pathToUse.length()-1);
+	private ConcurrentLinkedQueue<ACLEntry> acl;
+
+	private String folder;
+	private String[] indexFiles;
+	
+	public StaticResourceLocation(String folder, String[] indexFiles) {
+		String pathToUse = sanitizePath(folder);
 		this.folder = pathToUse;
-		this.configuration = configuration;
+		this.indexFiles = indexFiles;
+		acl = new ConcurrentLinkedQueue<>();
 	}
 	
 	public String folder() {
 		return folder;
 	}
 	
-	public String[][] configuration() {
-		return configuration;
+	public String[] indexFiles() {
+		return indexFiles;
+	}
+
+	public void aclEntry(ACLEntry aclEntry) {
+		acl.add(aclEntry);
 	}
 	
-	public InputStream getClassInputStream(String path) {
-		String pathToUse = collapsePath(path);
-		if (pathToUse.endsWith("/")) pathToUse = pathToUse.substring(0, pathToUse.length()-1);
+	private boolean isAllowedExtension(String path) {
+		if (acl.size() == 0) return true;
+		for (ACLEntry entry : acl) {
+			Boolean allowed = entry.isAllowed(path);
+			if (allowed != null) return allowed;
+		}
+		return false;
+	}
+	
+	public StaticResource getClassResource(String path) {
+		String pathToUse = sanitizePath(path);
 		String fullPath = folder+pathToUse;
+		if (!isAllowedExtension(fullPath))
+			new StaticResource(null, "");
 		InputStream input;
-		for (int i=0; i<configuration[0].length; i++) {
-			if (configuration[0][i].equals("*") || pathToUse.endsWith("."+configuration[0][i])) {
-				input = this.getClass().getResourceAsStream(fullPath);
-				if (input != null) return input;
-				input = this.getClass().getClassLoader().getResourceAsStream(fullPath);
-				if (input != null) return input;
-			}
+		input = this.getClass().getResourceAsStream(fullPath);
+		if (input != null) return new StaticResource(input, fullPath);
+		input = this.getClass().getClassLoader().getResourceAsStream(fullPath);
+		if (input != null) return new StaticResource(input, fullPath);
+		for (int i=0; i<indexFiles.length; i++) {
+			String fName = fullPath+"/"+indexFiles[i];
+			input = this.getClass().getResourceAsStream(fName);
+			if (input != null) return new StaticResource(input, fName);
+			input = this.getClass().getClassLoader().getResourceAsStream(fName);
+			if (input != null) return new StaticResource(input, fName);
 		}
-		for (int i=0; i<configuration[1].length; i++) {
-			input = this.getClass().getResourceAsStream(fullPath+"/"+configuration[1][i]);
-			if (input != null) return input;
-			input = this.getClass().getClassLoader().getResourceAsStream(fullPath+"/"+configuration[1][i]);
-			if (input != null) return input;
-		}
-		return null;	
+		return new StaticResource(null, "");
 	}
 	
-	public InputStream getFileInputStream(String path) {
-		String pathToUse = collapsePath(path);
-		if (pathToUse.endsWith("/")) pathToUse = pathToUse.substring(0, pathToUse.length()-1);
+	public StaticResource getFileResource(String path) {
+		String pathToUse = sanitizePath(path);
 		String fullPath = folder+pathToUse;
+		if (!isAllowedExtension(fullPath))
+			new StaticResource(null, "");
 		File file;
-		for (int i=0; i<configuration[0].length; i++) {
-			if (configuration[0][i].equals("*") || pathToUse.endsWith("."+configuration[0][i])) {
-				file = new File(fullPath);
-				if (file.exists() && !file.isDirectory()) {
-					try {
-						return new FileInputStream(fullPath);
-					} catch (FileNotFoundException e) {
-						return null;
-					}
-				}
-			}
+		file = new File(fullPath);
+		if (file.exists() && !file.isDirectory()) {
+			try {
+				return new StaticResource(new FileInputStream(file), fullPath);
+			} catch (FileNotFoundException e) {}
 		}
-		for (int i=0; i<configuration[1].length; i++) {
-			file = new File(fullPath+"/"+configuration[1][i]);
+		for (int i=0; i<indexFiles.length; i++) {
+			String fName = fullPath+"/"+indexFiles[i];
+			file = new File(fName);
 			if (file.exists() && !file.isDirectory()) {
 				try {
-					return new FileInputStream(fullPath);
-				} catch (FileNotFoundException e) {
-					return null;
-				}
+					return new StaticResource(new FileInputStream(file), fName);
+				} catch (FileNotFoundException e) {}
 			}
 		}
-		return null;	
+		return new StaticResource(null, "");	
 	}
 }

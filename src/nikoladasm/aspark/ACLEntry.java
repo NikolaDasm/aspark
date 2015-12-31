@@ -18,46 +18,18 @@
 
 package nikoladasm.aspark;
 
-import java.util.Map;
 import java.util.regex.Pattern;
 
-public final class Filter {
+public class ACLEntry {
 	private Pattern pathPattern;
-	private Map<String, Integer> parameterNamesMap;
-	private Boolean startWithWildcard;
-	private String acceptedType;
-	private FilterHandler handler;
+	private boolean allow;
 	
-	public Filter(
-			Pattern pathPattern,
-			Map<String, Integer> parameterNamesMap,
-			Boolean startWithWildcard,
-			String acceptedType,
-			FilterHandler handler) {
+	public ACLEntry(Pattern pathPattern, boolean allow) {
 		this.pathPattern = pathPattern;
-		this.parameterNamesMap = parameterNamesMap;
-		this.startWithWildcard = startWithWildcard;
-		this.acceptedType = acceptedType;
-		this.handler = handler;
-	}
-
-	public Pattern pathPattern() {
-		return pathPattern;
-	}
-
-	public Map<String, Integer> parameterNamesMap() {
-		return parameterNamesMap;
-	}
-
-	public Boolean startWithWildcard() {
-		return startWithWildcard;
+		this.allow = allow;
 	}
 	
-	public String acceptedType() {
-		return acceptedType;
-	}
-
-	public FilterHandler handler() {
-		return handler;
+	public Boolean isAllowed(String path) {
+		return (pathPattern.matcher(path).matches()) ? allow : null;
 	}
 }
