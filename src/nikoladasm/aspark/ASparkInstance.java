@@ -30,8 +30,9 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 import javax.net.ssl.KeyManagerFactory;
@@ -61,15 +62,15 @@ public class ASparkInstance extends Routable {
 	
 	private volatile String ipAddress = "0.0.0.0";
 	private volatile int port = ASPARK_DEFAULT_PORT;
-	private volatile Executor pool;
+	private volatile ExecutorService pool;
 	private volatile int maxThreads;
 	
-	private volatile boolean started = false;
+	private boolean started;
 	private ConcurrentLinkedQueue<Route> routes;
 	private ConcurrentLinkedQueue<Filter> before;
 	private ConcurrentLinkedQueue<Filter> after;
 	private volatile ASparkServer server;
-	private CountDownLatch latch = new CountDownLatch(1);
+	private volatile CountDownLatch latch = new CountDownLatch(1);
 	private ExceptionMap exceptionMap;
 	private WebSocketMap webSockets;
 	private volatile StaticResourceLocation location;
@@ -220,22 +221,23 @@ public class ASparkInstance extends Routable {
 	public synchronized void init() {
 		if(!started) {
 			pool = Executors.newFixedThreadPool(maxThreads);
+			server = new ASparkServer(
+					latch,
+					pool,
+					ipAddress,
+					port,
+					routes,
+					before,
+					after,
+					location,
+					externalLocation,
+					exceptionMap,
+					webSockets,
+					sslContext,
+					serverName,
+					mimeTypes);
 			new Thread(() -> {
-				server = new ASparkServer(
-						latch,
-						pool,
-						ipAddress,
-						port,
-						routes,
-						before,
-						after,
-						location,
-						externalLocation,
-						exceptionMap,
-						webSockets,
-						sslContext,
-						serverName,
-						mimeTypes);
+				server.start();
 			}).start();
 			started = true;
 		}
@@ -244,8 +246,18 @@ public class ASparkInstance extends Routable {
 	public void awaitInitialization() {
 		try {
 			latch.await();
+			if (server == null || !server.isStarted()) {
+				started = false;
+				throw new ASparkException("Netty server not started");
+			}
 		} catch (InterruptedException e) {
-			LOG.info("Interrupted by another thread");		}
+			LOG.info("Interrupted by another thread");
+		}
+	}
+	
+	public synchronized boolean isStarted() {
+		started = server != null && server.isStarted();
+		return started;
 	}
 	
 	@Override
@@ -300,9 +312,17 @@ public class ASparkInstance extends Routable {
 	public synchronized void stop() {
 		if (server != null) {
 			server.stop();
+			pool.shutdown();
+			try {
+				pool.awaitTermination(15, TimeUnit.SECONDS);
+				pool.shutdownNow();
+			} catch (InterruptedException e) {
+				LOG.error("Could not stop thread pool", e);
+				pool.shutdownNow();
+			}
 			latch = new CountDownLatch(1);
+			started = false;
 		}
-		started = false;
 	}
 	
 	public void await() {

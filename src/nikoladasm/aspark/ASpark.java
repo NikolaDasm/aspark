@@ -59,6 +59,10 @@ public final class ASpark {
 		getInstance().awaitInitialization();
 	}
 	
+	public static boolean isStarted() {
+		return getInstance().isStarted();
+	}
+	
 	public static void stop() {
 		getInstance().stop();
 	}

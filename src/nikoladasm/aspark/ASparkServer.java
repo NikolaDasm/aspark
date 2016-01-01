@@ -35,6 +35,7 @@ import java.util.Properties;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 
 import javax.net.ssl.SSLContext;
@@ -69,7 +70,7 @@ import static io.netty.handler.codec.http.HttpHeaders.*;
 import static io.netty.handler.codec.http.HttpResponseStatus.*;
 import static io.netty.handler.codec.http.HttpVersion.*;
 
-public class ASparkServer {
+class ASparkServer {
 	
 	private static final InternalLogger LOG = InternalLoggerFactory.getInstance(nikoladasm.aspark.ASparkServer.class);
 
@@ -96,9 +97,10 @@ public class ASparkServer {
 	private String serverName;
 	private Properties mimeTypes;
 	
-	private Channel channel;
-	private EventLoopGroup bossGroup;
-	private EventLoopGroup workerGroup;
+	private volatile Channel channel;
+	private volatile EventLoopGroup bossGroup;
+	private volatile EventLoopGroup workerGroup;
+	private volatile boolean started;
 	
 	private Executor pool;
 
@@ -532,7 +534,6 @@ public class ASparkServer {
 		this.maxContentLength = maxContentLength;
 		this.serverName = serverName;
 		this.mimeTypes = (mimeTypes == null) ? new Properties() : mimeTypes;
-		start();
 	}
 	
 	ASparkServer(CountDownLatch latch,
@@ -630,7 +631,7 @@ public class ASparkServer {
 				mimeTypes);
 	}
 	
-	private void start() {
+	public void start() {
 		bossGroup = new NioEventLoopGroup();
 		workerGroup = new NioEventLoopGroup();
 		try {
@@ -641,17 +642,25 @@ public class ASparkServer {
 				.option(ChannelOption.SO_BACKLOG, 1024)
 				.option(ChannelOption.SO_KEEPALIVE, true)
 				.option(ChannelOption.TCP_NODELAY, true)
+				.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10000)
 				.childOption(ChannelOption.SO_KEEPALIVE, true)
 				.childOption(ChannelOption.TCP_NODELAY, true);
 			channel =
 				server.bind(new InetSocketAddress(ipAddress, port)).sync().channel();
+			started = true;
 			latch.countDown();
 			LOG.info("Netty server started");
 		} catch (InterruptedException e) {
 			LOG.error("Unexpected exception", e);
-			bossGroup.shutdownGracefully();
-			workerGroup.shutdownGracefully();
+			bossGroup.shutdownGracefully(0, 0, TimeUnit.SECONDS);
+			workerGroup.shutdownGracefully(0, 0, TimeUnit.SECONDS);
+			started = false;
+			latch.countDown();
 		}
+	}
+	
+	public boolean isStarted() {
+		return started;
 	}
 	
 	public void stop() {
@@ -659,6 +668,9 @@ public class ASparkServer {
 		channel.close().syncUninterruptibly();
 		bossGroup.shutdownGracefully();
 		workerGroup.shutdownGracefully();
+		bossGroup.terminationFuture().syncUninterruptibly();
+		workerGroup.terminationFuture().syncUninterruptibly();
+		started = false;
 		LOG.info("Netty server stopped");
 	}
 	
@@ -668,8 +680,9 @@ public class ASparkServer {
 			channel.closeFuture().sync();
 		} catch (InterruptedException e) {
 			LOG.warn("Unexpected exception", e);
-			bossGroup.shutdownGracefully();
-			workerGroup.shutdownGracefully();
+			bossGroup.shutdownGracefully(0, 0, TimeUnit.SECONDS);
+			workerGroup.shutdownGracefully(0, 0, TimeUnit.SECONDS);
+			started = false;
 		}
 	}
 }
