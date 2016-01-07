@@ -22,7 +22,7 @@ import static java.util.Objects.requireNonNull;
 import static nikoladasm.aspark.HttpMethod.*;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-abstract class Routable {
+public abstract class Routable {
 
 	private static final String DEFAULT_ACCEPT_TYPE = "*/*";
 	private static final String ALL_PATHS = "/*";

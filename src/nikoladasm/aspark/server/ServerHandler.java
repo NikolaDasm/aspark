@@ -16,11 +16,22 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package nikoladasm.aspark;
+package nikoladasm.aspark.server;
+
+import static io.netty.handler.codec.http.HttpHeaders.isKeepAlive;
+import static io.netty.handler.codec.http.HttpHeaders.Names.*;
+import static io.netty.handler.codec.http.HttpHeaders.Values.KEEP_ALIVE;
+import static io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST;
+import static io.netty.handler.codec.http.HttpResponseStatus.INTERNAL_SERVER_ERROR;
+import static io.netty.handler.codec.http.HttpVersion.HTTP_1_0;
+import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
+import static nikoladasm.aspark.ASparkUtil.*;
+import static nikoladasm.aspark.HttpMethod.GET;
+import static nikoladasm.aspark.HttpMethod.POST;
+import static nikoladasm.aspark.ASparkInstance.DEFAULT_RESPONSE_TRANSFORMER;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -32,49 +43,38 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
-import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
 
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLEngine;
-
-import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.*;
-import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.channel.socket.SocketChannel;
-import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.http.*;
 import io.netty.handler.codec.http.multipart.*;
 import io.netty.handler.codec.http.multipart.InterfaceHttpData.HttpDataType;
-import io.netty.handler.codec.http.websocketx.WebSocketFrame;
+import io.netty.handler.codec.http.websocketx.*;
 import io.netty.handler.ssl.SslHandler;
-import io.netty.handler.stream.ChunkedWriteHandler;
 import io.netty.util.AttributeKey;
 import io.netty.util.CharsetUtil;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
+import nikoladasm.aspark.ExceptionHandler;
+import nikoladasm.aspark.ExceptionMap;
+import nikoladasm.aspark.Filter;
+import nikoladasm.aspark.FiltersList;
+import nikoladasm.aspark.HaltException;
+import nikoladasm.aspark.HttpMethod;
+import nikoladasm.aspark.RequestImpl;
+import nikoladasm.aspark.ResponseImpl;
+import nikoladasm.aspark.Route;
+import nikoladasm.aspark.RoutesList;
+import nikoladasm.aspark.StaticResourceLocation;
+import nikoladasm.aspark.WebSocketContextImpl;
+import nikoladasm.aspark.WebSocketHandler;
+import nikoladasm.aspark.WebSocketMap;
 import nikoladasm.aspark.StaticResourceLocation.StaticResource;
-import io.netty.handler.codec.http.websocketx.*;
 
-import static nikoladasm.aspark.ASparkUtil.*;
-import static nikoladasm.aspark.HttpMethod.*;
-import static nikoladasm.aspark.ASparkInstance.*;
+public class ServerHandler extends SimpleChannelInboundHandler<Object> {
+	private static final InternalLogger LOG = InternalLoggerFactory.getInstance(nikoladasm.aspark.server.ServerHandler.class);
 
-import static io.netty.handler.codec.http.HttpHeaders.Names.*;
-import static io.netty.handler.codec.http.HttpHeaders.Values.KEEP_ALIVE;
-import static io.netty.handler.codec.http.HttpHeaders.*;
-import static io.netty.handler.codec.http.HttpResponseStatus.*;
-import static io.netty.handler.codec.http.HttpVersion.*;
-
-class ASparkServer {
-	
-	private static final InternalLogger LOG = InternalLoggerFactory.getInstance(nikoladasm.aspark.ASparkServer.class);
-
-	private static final int DEFAULT_MAX_CONTENT_LENGTH = 20480;
 	private static final int HTTP_CACHE_SECONDS = 60;
 	private static final AttributeKey<WebSocketServerHandshaker> HANDSHAKER_ATTR_KEY =
 		AttributeKey.valueOf("HANDSHAKER");
@@ -82,69 +82,61 @@ class ASparkServer {
 			AttributeKey.valueOf("WEBSOCKET_HANDLER");
 	private static final AttributeKey<WebSocketContextImpl> WEBSOCKET_CONTEXT_ATTR_KEY =
 			AttributeKey.valueOf("WEBSOCKET_CONTEXT");
+	
 	private String ipAddress;
 	private int port;
-	private ConcurrentLinkedQueue<Route> routes;
-	private ConcurrentLinkedQueue<Filter> before;
-	private ConcurrentLinkedQueue<Filter> after;
+	private RoutesList routes;
+	private FiltersList before;
+	private FiltersList after;
 	private StaticResourceLocation location;
 	private StaticResourceLocation externalLocation;
 	private ExceptionMap exceptionMap;
 	private WebSocketMap webSockets;
-	private int maxContentLength;
-	private SSLContext sslContext;
-	private CountDownLatch latch;
 	private String serverName;
 	private Properties mimeTypes;
-	
-	private volatile Channel channel;
-	private volatile EventLoopGroup bossGroup;
-	private volatile EventLoopGroup workerGroup;
-	private volatile boolean started;
-	
 	private Executor pool;
 
-	private class ServerInitializer extends ChannelInitializer<SocketChannel> {
-		
-		@Override
-		public void initChannel(SocketChannel channel) throws Exception {
-			ChannelPipeline pipeline = channel.pipeline();
-			if (sslContext != null) {
-				SSLEngine sslEngine = sslContext.createSSLEngine();
-				sslEngine.setUseClientMode(false);
-				sslEngine.setWantClientAuth(true);
-				sslEngine.setEnabledProtocols(sslEngine.getSupportedProtocols());
-				sslEngine.setEnabledCipherSuites(sslEngine.getSupportedCipherSuites());
-				sslEngine.setEnableSessionCreation(true);
-				SslHandler sslHandler = new SslHandler(sslEngine);
-				pipeline.addLast("ssl", sslHandler);
-			}
-			pipeline.addLast("httpCodec", new HttpServerCodec());
-			pipeline.addLast("inflater", new HttpContentDecompressor());
-			pipeline.addLast("deflater", new HttpContentCompressor());
-			pipeline.addLast("chunkedWriter", new ChunkedWriteHandler());
-			pipeline.addLast("aggregator", new HttpObjectAggregator(maxContentLength));
-			pipeline.addLast("handler", new ServerHandler());
+	public ServerHandler(
+			String ipAddress,
+			int port,
+			RoutesList routes,
+			FiltersList before,
+			FiltersList after,
+			StaticResourceLocation location,
+			StaticResourceLocation externalLocation,
+			ExceptionMap exceptionMap,
+			WebSocketMap webSockets,
+			String serverName,
+			Properties mimeTypes,
+			Executor pool) {
+		this.ipAddress = ipAddress;
+		this.routes = routes;
+		this.before = before;
+		this.after = after;
+		this.location = location;
+		this.externalLocation = externalLocation;
+		this.exceptionMap = exceptionMap;
+		this.webSockets = webSockets;
+		this.serverName = serverName;
+		this.mimeTypes = mimeTypes;
+		this.pool = pool;
+	}
+	
+	@Override
+	protected void channelRead0(ChannelHandlerContext ctx, Object msg) throws Exception {
+		if (msg instanceof FullHttpRequest) {
+			handleHttpRequest(ctx, (FullHttpRequest)msg);
+		} else if (msg instanceof WebSocketFrame) {
+			handleWebSocketFrame(ctx, (WebSocketFrame)msg);
 		}
 	}
 	
-	class ServerHandler extends SimpleChannelInboundHandler<Object> {
-
-		@Override
-		protected void channelRead0(ChannelHandlerContext ctx, Object msg) throws Exception {
-			if (msg instanceof FullHttpRequest) {
-				handleHttpRequest(ctx, (FullHttpRequest)msg);
-			} else if (msg instanceof WebSocketFrame) {
-				handleWebSocketFrame(ctx, (WebSocketFrame)msg);
-			}
-		}
-		
-		@Override
-		public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
-			LOG.warn("Unexpected exception", cause);
-			ctx.close();
-		}
+	@Override
+	public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
+		LOG.warn("Unexpected exception", cause);
+		ctx.close();
 	}
+	
 	
 	private void handleHttpRequest(ChannelHandlerContext ctx, FullHttpRequest nettyRequest) throws Exception {
 		boolean decoderResult = nettyRequest.getDecoderResult().isSuccess();
@@ -239,17 +231,23 @@ class ASparkServer {
 					Unpooled.copiedBuffer((body == null) ? "" : body, CharsetUtil.UTF_8));
 		response.headers().set(CONTENT_TYPE, "text/plain; charset=UTF-8");
 		response.headers().set(CONTENT_LENGTH, response.content().readableBytes());
-		if (!keepAlive) {
-			ctx.channel().writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
-		} else {
+		if (keepAlive)
 			response.headers().set(CONNECTION, KEEP_ALIVE);
-			ctx.channel().writeAndFlush(response);
-		}
+		ChannelFuture lastContentFuture = ctx.channel().writeAndFlush(response);
+		if (!keepAlive || HTTP_1_0.equals(version))
+			lastContentFuture.addListener(ChannelFutureListener.CLOSE);
+	}
+	
+	private boolean isDecodeableContent(String contentType) {
+		if (contentType == null || contentType.isEmpty()) return false;
+		return contentType.startsWith("multipart/form-data") ||
+				contentType.startsWith("application/x-www-form-urlencoded");
 	}
 	
 	private Map<String, List<String>> getPostAttributes(HttpMethod requestMethod,
 			FullHttpRequest request) {
 		if (!requestMethod.equals(POST)) return null;
+		if (isDecodeableContent(request.headers().get(CONTENT_TYPE))) return null;
 		final HttpPostRequestDecoder decoder = new HttpPostRequestDecoder(request);
 		final Map<String, List<String>> map = new HashMap<String, List<String>>();
 		try {
@@ -277,15 +275,12 @@ class ASparkServer {
 			RequestImpl request,
 			ResponseImpl response,
 			HttpMethod requestMethod) throws Exception {
-		for (Filter filter : before) {
-			Matcher parameterMatcher = filter.pathPattern().matcher(path);
-			if(isAcceptContentType(acceptType, filter.acceptedType()) &&
-				parameterMatcher.matches()) {
-				request.parameterNamesMap(filter.parameterNamesMap());
-				request.startWithWildcard(filter.startWithWildcard());
-				request.parameterMatcher(parameterMatcher);
-				filter.handler().handle(request, response);
-			}
+		FiltersList.FilterConfig config = FiltersList.createConfig(path, acceptType);
+		for (Filter filter : before.filteredList(FiltersList.filter(config))) {
+			request.parameterNamesMap(filter.parameterNamesMap());
+			request.startWithWildcard(filter.startWithWildcard());
+			request.parameterMatcher(config.parameterMatcher);
+			filter.handler().handle(request, response);
 		}
 		boolean routeFound =
 			processRoutes(
@@ -301,15 +296,11 @@ class ASparkServer {
 					response,
 					requestMethod);
 		}
-		for (Filter filter : after) {
-			Matcher parameterMatcher = filter.pathPattern().matcher(path);
-			if(isAcceptContentType(acceptType, filter.acceptedType()) &&
-				parameterMatcher.matches()) {
-				request.parameterNamesMap(filter.parameterNamesMap());
-				request.startWithWildcard(filter.startWithWildcard());
-				request.parameterMatcher(parameterMatcher);
-				filter.handler().handle(request, response);
-			}
+		for (Filter filter : after.filteredList(FiltersList.filter(config))) {
+			request.parameterNamesMap(filter.parameterNamesMap());
+			request.startWithWildcard(filter.startWithWildcard());
+			request.parameterMatcher(config.parameterMatcher);
+			filter.handler().handle(request, response);
 		}
 		if (!routeFound) {
 			response.transformer(DEFAULT_RESPONSE_TRANSFORMER);
@@ -324,19 +315,15 @@ class ASparkServer {
 			RequestImpl request,
 			ResponseImpl response,
 			HttpMethod requestMethod) throws Exception {
-		for (Route route : routes) {
-			Matcher parameterMatcher = route.pathPattern().matcher(path);
-			if(isEqualHttpMethod(requestMethod, route.httpMethod()) &&
-				isAcceptContentType(acceptType, route.acceptedType()) &&
-				parameterMatcher.matches()) {
-				request.parameterNamesMap(route.parameterNamesMap());
-				request.startWithWildcard(route.startWithWildcard());
-				request.parameterMatcher(parameterMatcher);
-				response.transformer(route.responseTransformer());
-				Object body = route.handler().handle(request, response);
-				response.body(body);
-				return true;
-			}
+		RoutesList.FilterConfig config = RoutesList.createConfig(path, acceptType, requestMethod);
+		for (Route route : routes.filteredList(RoutesList.filter(config))) {
+			request.parameterNamesMap(route.parameterNamesMap());
+			request.startWithWildcard(route.startWithWildcard());
+			request.parameterMatcher(config.parameterMatcher);
+			response.transformer(route.responseTransformer());
+			Object body = route.handler().handle(request, response);
+			response.body(body);
+			return true;
 		}
 		return false;
 	}
@@ -502,187 +489,5 @@ class ASparkServer {
 		String protocol = "ws";
 		if (cp.get(SslHandler.class) != null) protocol = "wss";
 		return protocol + "://" + req.headers().get(HOST) + path;
-	}
-	
-	ASparkServer(CountDownLatch latch,
-			Executor pool,
-			String ipAddress,
-			int port,
-			ConcurrentLinkedQueue<Route> routes,
-			ConcurrentLinkedQueue<Filter> beforeFilters,
-			ConcurrentLinkedQueue<Filter> afterFilters,
-			StaticResourceLocation location,
-			StaticResourceLocation externalLocation,
-			ExceptionMap exceptionMap,
-			WebSocketMap webSockets,
-			SSLContext sslContext,
-			int maxContentLength,
-			String serverName,
-			Properties mimeTypes) {
-		this.pool = pool;
-		this.latch = latch;
-		this.ipAddress = ipAddress;
-		this.port = port;
-		this.routes = routes;
-		this.before = beforeFilters;
-		this.after = afterFilters;
-		this.location = location;
-		this.externalLocation = externalLocation;
-		this.exceptionMap = exceptionMap;
-		this.webSockets = webSockets;
-		this.sslContext = sslContext;
-		this.maxContentLength = maxContentLength;
-		this.serverName = serverName;
-		this.mimeTypes = (mimeTypes == null) ? new Properties() : mimeTypes;
-	}
-	
-	ASparkServer(CountDownLatch latch,
-			Executor pool,
-			String ipAddress,
-			int port,
-			ConcurrentLinkedQueue<Route> routes,
-			ConcurrentLinkedQueue<Filter> beforeFilters,
-			ConcurrentLinkedQueue<Filter> afterFilters,
-			StaticResourceLocation location,
-			StaticResourceLocation externalLocation,
-			ExceptionMap exceptionMap,
-			WebSocketMap webSockets,
-			SSLContext sslContext,
-			String serverName,
-			Properties mimeTypes) {
-		this(
-				latch,
-				pool,
-				ipAddress,
-				port,
-				routes,
-				beforeFilters,
-				afterFilters,
-				location,
-				externalLocation,
-				exceptionMap,
-				webSockets,
-				sslContext,
-				DEFAULT_MAX_CONTENT_LENGTH,
-				serverName,
-				mimeTypes);
-	}
-	
-	ASparkServer(CountDownLatch latch,
-			Executor pool,
-			String ipAddress,
-			int port,
-			ConcurrentLinkedQueue<Route> routes,
-			ConcurrentLinkedQueue<Filter> beforeFilters,
-			ConcurrentLinkedQueue<Filter> afterFilters,
-			StaticResourceLocation location,
-			StaticResourceLocation externalLocation,
-			ExceptionMap exceptionMap,
-			WebSocketMap webSockets,
-			int maxContentLength,
-			String serverName,
-			Properties mimeTypes) {
-		this(
-				latch,
-				pool,
-				ipAddress,
-				port,
-				routes,
-				beforeFilters,
-				afterFilters,
-				location,
-				externalLocation,
-				exceptionMap,
-				webSockets,
-				null,
-				maxContentLength,
-				serverName,
-				mimeTypes);
-	}
-	
-	ASparkServer(CountDownLatch latch,
-			Executor pool,
-			String ipAddress,
-			int port,
-			ConcurrentLinkedQueue<Route> routes,
-			ConcurrentLinkedQueue<Filter> beforeFilters,
-			ConcurrentLinkedQueue<Filter> afterFilters,
-			StaticResourceLocation location,
-			StaticResourceLocation externalLocation,
-			ExceptionMap exceptionMap,
-			WebSocketMap webSockets,
-			String serverName,
-			Properties mimeTypes) {
-		this(
-				latch,
-				pool,
-				ipAddress,
-				port,
-				routes,
-				beforeFilters, 
-				afterFilters,
-				location,
-				externalLocation,
-				exceptionMap,
-				webSockets,
-				null,
-				DEFAULT_MAX_CONTENT_LENGTH,
-				serverName,
-				mimeTypes);
-	}
-	
-	public void start() {
-		bossGroup = new NioEventLoopGroup();
-		workerGroup = new NioEventLoopGroup();
-		try {
-			ServerBootstrap server = new ServerBootstrap();
-			server.group(bossGroup, workerGroup)
-				.channel(NioServerSocketChannel.class)
-				.childHandler(new ServerInitializer())
-				.option(ChannelOption.SO_BACKLOG, 1024)
-				.option(ChannelOption.SO_KEEPALIVE, true)
-				.option(ChannelOption.TCP_NODELAY, true)
-				.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10000)
-				.childOption(ChannelOption.SO_KEEPALIVE, true)
-				.childOption(ChannelOption.TCP_NODELAY, true);
-			channel =
-				server.bind(new InetSocketAddress(ipAddress, port)).sync().channel();
-			started = true;
-			latch.countDown();
-			LOG.info("Netty server started");
-		} catch (InterruptedException e) {
-			LOG.error("Unexpected exception", e);
-			bossGroup.shutdownGracefully(0, 0, TimeUnit.SECONDS);
-			workerGroup.shutdownGracefully(0, 0, TimeUnit.SECONDS);
-			started = false;
-			latch.countDown();
-		}
-	}
-	
-	public boolean isStarted() {
-		return started;
-	}
-	
-	public void stop() {
-		if (channel == null) return;
-		channel.close().syncUninterruptibly();
-		bossGroup.shutdownGracefully();
-		workerGroup.shutdownGracefully();
-		bossGroup.terminationFuture().syncUninterruptibly();
-		workerGroup.terminationFuture().syncUninterruptibly();
-		started = false;
-		LOG.info("Netty server stopped");
-	}
-	
-	public void await() {
-		if (channel == null) return;
-		try {
-			channel.closeFuture().sync();
-		} catch (InterruptedException e) {
-			LOG.warn("Unexpected exception", e);
-			bossGroup.shutdownGracefully(0, 0, TimeUnit.SECONDS);
-			workerGroup.shutdownGracefully(0, 0, TimeUnit.SECONDS);
-			started = false;
-		}
 	}
 }

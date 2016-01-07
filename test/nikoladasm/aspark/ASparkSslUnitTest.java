@@ -22,7 +22,10 @@ import static nikoladasm.aspark.ASpark.*;
 
 import static org.junit.Assert.*;
 
+import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 
 import org.junit.AfterClass;
 
@@ -37,6 +40,7 @@ import nikoladasm.simplehttpclient.HttpResponse;
 import nikoladasm.simplehttpclient.SimpleHttpClient;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
 public class ASparkSslUnitTest {
 
@@ -55,12 +59,19 @@ public class ASparkSslUnitTest {
 		
 	
 
+	private static void setupStaticFiles() throws IOException {
+		new File(System.getProperty("java.io.tmpdir")+"/ssl/pages").mkdirs();
+		Files.copy(Paths.get("resources/pages/index.html"), Paths.get(System.getProperty("java.io.tmpdir")+"/ssl/pages"), REPLACE_EXISTING);
+		externalStaticFileLocation(System.getProperty("java.io.tmpdir"));
+	}
+		
 	@BeforeClass
-	public static void setup() {
+	public static void setup() throws IOException {
 		InternalLoggerFactory.setDefaultFactory(new Slf4JLoggerFactory());
 		ipAddress(IP_ADDRESS);
 		port(PORT);
 		secure("resources/keystore.jks", "password", null, null);
+		setupStaticFiles();
 		init();
 		awaitInitialization();
 	}
@@ -102,5 +113,14 @@ public class ASparkSslUnitTest {
 		assertThat(clientResponse, is(notNullValue()));
 		assertThat(clientResponse.status(), is(equalTo(201)));
 		assertThat(resSrt, is(containsString("Method override worked")));
+	}
+
+	@Test
+	public void shouldBeStaticFilePagesIndexHtml() throws Exception {
+		String resSrt = C.get(SSL_PATH+"/pages/", clResTr);
+		assertThat(resSrt, is(notNullValue()));
+		assertThat(clientResponse, is(notNullValue()));
+		assertThat(clientResponse.status(), is(equalTo(200)));
+		assertThat(resSrt, is(equalTo("<html><body>Hello Static World!</body></html>")));
 	}
 }

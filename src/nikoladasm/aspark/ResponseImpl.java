@@ -20,10 +20,14 @@ package nikoladasm.aspark;
 
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpVersion;
+import io.netty.handler.codec.http.LastHttpContent;
 import io.netty.handler.codec.http.cookie.Cookie;
 import io.netty.handler.codec.http.cookie.DefaultCookie;
 import io.netty.handler.codec.http.cookie.ServerCookieEncoder;
+import io.netty.handler.stream.ChunkedStream;
 import io.netty.handler.codec.http.FullHttpResponse;
+import io.netty.handler.codec.http.HttpChunkedInput;
+import io.netty.handler.codec.http.HttpResponse;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -35,15 +39,19 @@ import java.util.Map;
 
 import static io.netty.handler.codec.http.HttpHeaders.Names.*;
 import static io.netty.handler.codec.http.HttpHeaders.Values.*;
-
+import static io.netty.handler.codec.http.HttpVersion.HTTP_1_0;
+import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.DefaultFullHttpResponse;
+import io.netty.handler.codec.http.DefaultHttpResponse;
 
 import static nikoladasm.aspark.HttpMethod.*;
 import static nikoladasm.aspark.ASparkUtil.*;
 
 public class ResponseImpl implements Response {
+	
+	private static final int DEFAULT_CHUNK_SIZE = 8192;
 	
 	private HttpResponseStatus status;
 	private ChannelHandlerContext ctx;
@@ -57,7 +65,7 @@ public class ResponseImpl implements Response {
 	private HttpMethod httpMethod;
 	private String serverName;
 	
-	ResponseImpl(ChannelHandlerContext ctx,
+	public ResponseImpl(ChannelHandlerContext ctx,
 			HttpVersion version,
 			boolean keepAlive,
 			HttpMethod httpMethod,
@@ -89,6 +97,30 @@ public class ResponseImpl implements Response {
 	}
 
 	public void send() throws Exception {
+		if (stream != null && !HTTP_1_0.equals(version))
+			sendChunked();
+		else
+			sendUnChunked();
+	}
+	
+	private void sendChunked() {
+		HttpResponse response =
+			new DefaultHttpResponse(version, status);
+		setHeades(response);
+		response.headers().set(TRANSFER_ENCODING, CHUNKED);
+		cookies.forEach((name, cookie) ->
+			response.headers().add(SET_COOKIE, ServerCookieEncoder.LAX.encode(cookie)));
+		ctx.channel().write(response);
+		Object body;
+		if (!httpMethod.equals(HEAD)) {
+			body = new HttpChunkedInput(new ChunkedStream(stream, DEFAULT_CHUNK_SIZE));
+		} else {
+			body = LastHttpContent.EMPTY_LAST_CONTENT;
+		}
+		writeObjectToChannel(body).addListener(channelFuture -> stream.close());
+	}
+	
+	private void sendUnChunked() throws Exception {
 		FullHttpResponse response =
 			new DefaultFullHttpResponse(version, status);
 		setHeades(response);
@@ -101,29 +133,7 @@ public class ResponseImpl implements Response {
 			response.headers().add(SET_COOKIE, ServerCookieEncoder.LAX.encode(cookie)));
 		if (httpMethod.equals(HEAD))
 			response.content().clear();
-		if (!keepAlive) {
-			ctx.channel().writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
-		} else {
-			ctx.channel().writeAndFlush(response);
-		}
-	}
-	
-	private void setHeades(FullHttpResponse response) {
-		headers.forEach((key, value) ->
-		response.headers().add(key, value));
-		if(!headers.containsKey(CONTENT_TYPE))
-			response.headers().set(CONTENT_TYPE, "text/plain; charset=UTF-8");
-		if(!headers.containsKey(SERVER))
-			response.headers().set(SERVER, serverName);
-		if(!headers.containsKey(DATE)) {
-			final String httpDate =
-				DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneOffset.UTC));
-			response.headers().set(DATE, httpDate);
-		}
-		if(!headers.containsKey(VARY))
-			response.headers().set(VARY, "Accept-Encoding");
-		if (keepAlive)
-			response.headers().set(CONNECTION, KEEP_ALIVE);
+		writeObjectToChannel(response);
 	}
 	
 	private void sendByteArray(FullHttpResponse response) throws Exception {
@@ -138,6 +148,28 @@ public class ResponseImpl implements Response {
 	private void sendStream(FullHttpResponse response) throws IOException {
 		copyStreamToByteBuf(stream, response.content());
 		stream.close();
+	}
+	
+	private ChannelFuture writeObjectToChannel(Object object) {
+		ChannelFuture lastContentFuture = ctx.channel().writeAndFlush(object);
+		if (!keepAlive || HTTP_1_0.equals(version))
+			lastContentFuture.addListener(ChannelFutureListener.CLOSE);
+		return lastContentFuture;
+	}
+	
+	private void setHeades(HttpResponse response) {
+		headers.putIfAbsent(CONTENT_TYPE, "text/plain; charset=UTF-8");
+		headers.putIfAbsent(SERVER, serverName);
+		if(!headers.containsKey(DATE)) {
+			final String httpDate =
+				DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneOffset.UTC));
+			headers.put(DATE, httpDate);
+		}
+		headers.putIfAbsent(VARY, "Accept-Encoding");
+		headers.forEach((key, value) ->
+			response.headers().add(key, value));
+		if (keepAlive)
+			response.headers().set(CONNECTION, KEEP_ALIVE);
 	}
 	
 	@Override

@@ -138,7 +138,7 @@ public final class ASparkUtil {
 			result += directory + FOLDER_SEPARATOR;
 		if (!path.startsWith(FOLDER_SEPARATOR))
 			result = result.substring(1);
-		if (!path.endsWith(FOLDER_SEPARATOR) && !result.equals(FOLDER_SEPARATOR))
+		if (!path.endsWith(FOLDER_SEPARATOR) && result.equals(FOLDER_SEPARATOR))
 			result = result.substring(0, result.length()-1);
 		return result;
 	}
@@ -160,6 +160,14 @@ public final class ASparkUtil {
 				root = root.createIfAbsentAndGet(key);
 			}
 			root.values(values.toArray(new String[values.size()]));
+		});
+		return result;
+	}
+	
+	public static ParamsMap parseUniqueParams(Map<String, String> params) {
+		ParamsMap result = new ParamsMap();
+		params.forEach((key, value) -> {
+			result.createIfAbsentAndGet(key).value(value);
 		});
 		return result;
 	}

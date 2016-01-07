@@ -807,6 +807,18 @@ public class ASparkUnitTest {
 	}
 	
 	@Test
+	public void shouldBeStaticFileWithGzipCompression() throws Exception {
+		String resSrt = C.get(PATH+"/css/style.css", (request, body) -> {
+			request.header("Accept-Encoding", "gzip");
+			return new byte[0];
+		}, clResTr);
+		assertThat(resSrt, is(notNullValue()));
+		assertThat(clientResponse, is(notNullValue()));
+		assertThat(clientResponse.status(), is(equalTo(200)));
+		assertThat(resSrt, is(equalTo("Content of css file")));
+	}
+	
+	@Test
 	public void shouldBeExternalStaticFile() throws Exception {
 		String resSrt = C.get(PATH+"/externalFile.html", clResTr);
 		assertThat(resSrt, is(notNullValue()));
@@ -955,6 +967,19 @@ public class ASparkUnitTest {
 		assertThat(clientResponse, is(notNullValue()));
 		assertThat(clientResponse.status(), is(equalTo(200)));
 		assertThat(resSrt, is(containsString("root")));
+	}
+	
+	@Test
+	public void shouldBeGetParamValueImParamsMap() throws Exception {
+		get("/parammap/:param", (request, response) -> {
+			return "echo: " + request.paramsMap(":param").value();
+		});
+		
+		String resSrt = C.get(PATH+"/parammap/param_value", clResTr);
+		assertThat(resSrt, is(notNullValue()));
+		assertThat(clientResponse, is(notNullValue()));
+		assertThat(clientResponse.status(), is(equalTo(200)));
+		assertThat(resSrt, is(equalTo("echo: param_value")));
 	}
 	
 	//////////////////////////////////////////////////////////////////////////////

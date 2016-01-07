@@ -46,6 +46,7 @@ public class RequestImpl implements Request {
 	private FullHttpRequest request;
 	private Map<String, String> params;
 	private Map<String, Integer> parameterNamesMap;
+	private ParamsMap paramsMap;
 	private Boolean startWithWildcard;
 	private Matcher parameterMatcher;
 	private HttpMethod requestMethod;
@@ -105,12 +106,11 @@ public class RequestImpl implements Request {
 	
 	@Override
 	public Map<String, String> params() {
-		if (params != null) {
-			params = new HashMap<>();
-			parameterNamesMap.forEach((name, index) -> {
-				params.put(name, parameterMatcher.group(parameterIndex(index)));
-			});
-		}
+		if (params != null) return params;
+		params = new HashMap<>();
+		parameterNamesMap.forEach((name, index) -> {
+			params.put(name, parameterMatcher.group(parameterIndex(index)));
+		});
 		return params;
 	}
 	
@@ -121,6 +121,25 @@ public class RequestImpl implements Request {
 		Integer index = parameterNamesMap.get(name);
 		if (index == null) return null;
 		return parameterMatcher.group(parameterIndex(index));
+	}
+	
+	@Override
+	public ParamsMap paramsMap() {
+		initParamsMap();
+		return paramsMap;
+	}
+	
+	@Override
+	public ParamsMap paramsMap(String param) {
+		initParamsMap();
+		String name = (param.startsWith(":")) ? param : ":"+param; 
+		return paramsMap.get(name);
+	}
+	
+	private void initParamsMap() {
+		if (paramsMap == null) {
+			paramsMap = parseUniqueParams(params());
+		}
 	}
 	
 	@Override

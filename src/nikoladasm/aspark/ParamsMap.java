@@ -23,30 +23,30 @@ import java.util.Map;
 
 public class ParamsMap {
 	
-	private final Map<String, ParamsMap> queryMap;
+	private final Map<String, ParamsMap> map;
 	private String[] values;
 	
 	public ParamsMap() {
-		queryMap = new HashMap<>();
+		map = new HashMap<>();
 	}
 
-	public Map<String, ParamsMap> getQueryMap() {
-		return queryMap;
+	public Map<String, ParamsMap> getMap() {
+		return map;
 	}
 	
 	public ParamsMap get(String key) {
-		return queryMap.getOrDefault(key, new ParamsMap());
+		return map.getOrDefault(key, new ParamsMap());
 	}
 	
 	public ParamsMap createIfAbsentAndGet(String key) {
-		queryMap.putIfAbsent(key, new ParamsMap());
-		return queryMap.get(key);
+		map.putIfAbsent(key, new ParamsMap());
+		return map.get(key);
 	}
 	
 	public ParamsMap get(String... keys) {
 		ParamsMap root = this;
 		for (String key : keys) {
-			root = get(key);
+			root = root.get(key);
 		}
 		return root;
 	}
@@ -65,6 +65,10 @@ public class ParamsMap {
 	
 	public String value() {
 		return hasValue() ? values[0] : null;
+	}
+	
+	public void value(String value) {
+		this.values = new String[]{value};
 	}
 	
 	public Boolean booleanValue() {
@@ -88,7 +92,7 @@ public class ParamsMap {
 	}
 	
 	public boolean isEmpty() {
-		return queryMap.isEmpty();
+		return map.isEmpty();
 	}
 
 	public boolean hasValue() {

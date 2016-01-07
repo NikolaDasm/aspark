@@ -28,7 +28,6 @@ import java.security.KeyStore;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -42,6 +41,7 @@ import javax.net.ssl.TrustManagerFactory;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 import nikoladasm.aspark.HttpMethod;
+import nikoladasm.aspark.server.ASparkServer;
 
 import static java.util.Objects.requireNonNull;
 
@@ -66,9 +66,9 @@ public class ASparkInstance extends Routable {
 	private volatile int maxThreads;
 	
 	private boolean started;
-	private ConcurrentLinkedQueue<Route> routes;
-	private ConcurrentLinkedQueue<Filter> before;
-	private ConcurrentLinkedQueue<Filter> after;
+	private RoutesList routes;
+	private FiltersList before;
+	private FiltersList after;
 	private volatile ASparkServer server;
 	private volatile CountDownLatch latch = new CountDownLatch(1);
 	private ExceptionMap exceptionMap;
@@ -80,9 +80,9 @@ public class ASparkInstance extends Routable {
 	private Properties mimeTypes;
 
 	public ASparkInstance() {
-		routes = new ConcurrentLinkedQueue<>();
-		before = new ConcurrentLinkedQueue<>();
-		after = new ConcurrentLinkedQueue<>();
+		routes = new RoutesList();
+		before = new FiltersList();
+		after = new FiltersList();
 		exceptionMap = new ExceptionMap();
 		maxThreads = Runtime.getRuntime().availableProcessors();
 		webSockets = new WebSocketMap();
@@ -283,7 +283,7 @@ public class ASparkInstance extends Routable {
 				acceptedType,
 				handler,
 				responseTransformer);
-		routes.add(route);
+		routes.addLast(route);
 	}
 
 	@Override
@@ -304,9 +304,9 @@ public class ASparkInstance extends Routable {
 				acceptedType,
 				handler);
 		if (before)
-			this.before.add(filter);
+			this.before.addLast(filter);
 		else
-			after.add(filter);
+			after.addLast(filter);
 	}
 	
 	public synchronized void stop() {

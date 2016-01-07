@@ -27,6 +27,8 @@ public interface Request extends SAttributeMap {
 
 	Map<String, String> params();
 	String params(String param);
+	ParamsMap paramsMap();
+	ParamsMap paramsMap(String name);
 	String[] splat();
 	String requestMethod();
 	String method();

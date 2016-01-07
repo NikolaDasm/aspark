@@ -28,6 +28,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class StaticResourceLocation {
 
+	private static final String FOLDER_SEPARATOR = "/";
+
 	public static class StaticResource {
 		private InputStream stream;
 		private String fullPath;
@@ -79,29 +81,54 @@ public class StaticResourceLocation {
 		return false;
 	}
 	
+	private boolean isLikeDirectory(String path) {
+		String[] pathParts = path.split(FOLDER_SEPARATOR);
+		String lastPart = pathParts[pathParts.length-1];
+		int lastPointPosition = lastPart.lastIndexOf('.');
+		return lastPointPosition < 0;
+	}
+	
+	private InputStream resourceStream(String path) {
+		InputStream input = this.getClass().getResourceAsStream(path);
+		if (input != null) return input;
+		return this.getClass().getClassLoader().getResourceAsStream(path);
+	}
+	
+	private StaticResource resource(String path) {
+		InputStream input = resourceStream(path);
+		if (input != null) return new StaticResource(input, path);
+		return null;
+	}
+	
+	private StaticResource resource(String path, String[] indexFiles) {
+		for (int i=0; i<indexFiles.length; i++) {
+			String fName = path+"/"+indexFiles[i];
+			InputStream input = resourceStream(fName);
+			if (input != null) return new StaticResource(input, fName);
+		}
+		return null;
+	}
+	
 	public StaticResource getClassResource(String path) {
-		String pathToUse = sanitizePath(path);
-		String fullPath = folder+pathToUse;
+		String fullPath = folder+path;
 		if (!isAllowedExtension(fullPath))
 			new StaticResource(null, "");
-		InputStream input;
-		input = this.getClass().getResourceAsStream(fullPath);
-		if (input != null) return new StaticResource(input, fullPath);
-		input = this.getClass().getClassLoader().getResourceAsStream(fullPath);
-		if (input != null) return new StaticResource(input, fullPath);
-		for (int i=0; i<indexFiles.length; i++) {
-			String fName = fullPath+"/"+indexFiles[i];
-			input = this.getClass().getResourceAsStream(fName);
-			if (input != null) return new StaticResource(input, fName);
-			input = this.getClass().getClassLoader().getResourceAsStream(fName);
-			if (input != null) return new StaticResource(input, fName);
+		if (isLikeDirectory(fullPath)) {
+			StaticResource resource = resource(fullPath, indexFiles);
+			if (resource != null) return resource;
+			resource = resource(fullPath);
+			if (resource != null) return resource;
+		} else {
+			StaticResource resource = resource(fullPath);
+			if (resource != null) return resource;
+			resource = resource(fullPath, indexFiles);
+			if (resource != null) return resource;
 		}
 		return new StaticResource(null, "");
 	}
 	
 	public StaticResource getFileResource(String path) {
-		String pathToUse = sanitizePath(path);
-		String fullPath = folder+pathToUse;
+		String fullPath = folder+path;
 		if (!isAllowedExtension(fullPath))
 			new StaticResource(null, "");
 		File file;
