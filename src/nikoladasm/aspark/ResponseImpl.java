@@ -53,7 +53,7 @@ public class ResponseImpl implements Response {
 	
 	private static final int DEFAULT_CHUNK_SIZE = 8192;
 	
-	private HttpResponseStatus status;
+	private int status;
 	private ChannelHandlerContext ctx;
 	private HttpVersion version;
 	private Map<String,String> headers;
@@ -73,7 +73,7 @@ public class ResponseImpl implements Response {
 		this.ctx = ctx;
 		this.version = version;
 		this.keepAlive = keepAlive;
-		status = HttpResponseStatus.valueOf(200);
+		status = 200;
 		headers = new HashMap<>();
 		cookies = new HashMap<>();
 		this.httpMethod = httpMethod;
@@ -105,7 +105,7 @@ public class ResponseImpl implements Response {
 	
 	private void sendChunked() {
 		HttpResponse response =
-			new DefaultHttpResponse(version, status);
+			new DefaultHttpResponse(version, HttpResponseStatus.valueOf(status));
 		setHeades(response);
 		response.headers().set(TRANSFER_ENCODING, CHUNKED);
 		cookies.forEach((name, cookie) ->
@@ -122,7 +122,7 @@ public class ResponseImpl implements Response {
 	
 	private void sendUnChunked() throws Exception {
 		FullHttpResponse response =
-			new DefaultFullHttpResponse(version, status);
+			new DefaultFullHttpResponse(version, HttpResponseStatus.valueOf(status));
 		setHeades(response);
 		if (stream != null)
 			sendStream(response);
@@ -174,7 +174,7 @@ public class ResponseImpl implements Response {
 	
 	@Override
 	public void status(int statusCode) {
-		status = HttpResponseStatus.valueOf(statusCode);
+		status = statusCode;
 	}
 	
 	@Override
@@ -195,14 +195,14 @@ public class ResponseImpl implements Response {
 	@Override
 	public void redirect(String location) {
 		headers.put(LOCATION, location);
-		status = HttpResponseStatus.valueOf(302);
+		status = 302;
 		headers.put(CONNECTION, "close");
 	}
 	
 	@Override
 	public void redirect(String location, int httpStatusCode) {
 		headers.put(LOCATION, location);
-		status = HttpResponseStatus.valueOf(httpStatusCode);
+		status = httpStatusCode;
 		headers.put(CONNECTION, "close");
 	}
 	
@@ -251,5 +251,11 @@ public class ResponseImpl implements Response {
 		Cookie cookie = new DefaultCookie(name, "");
 		cookie.setMaxAge(0);
 		cookies.put(name, cookie);
+	}
+	
+	@Override
+	public void authenticateBasic(String realm) {
+		status = 401;
+		headers.put(WWW_AUTHENTICATE, "Basic realm=\""+realm+"\"");
 	}
 }

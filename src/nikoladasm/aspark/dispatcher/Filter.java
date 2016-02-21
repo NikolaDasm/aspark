@@ -16,7 +16,7 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package nikoladasm.aspark;
+package nikoladasm.aspark.dispatcher;
 
 import java.util.Map;
 import java.util.regex.Pattern;

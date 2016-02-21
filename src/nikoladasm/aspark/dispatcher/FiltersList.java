@@ -1,4 +1,4 @@
-package nikoladasm.aspark;
+package nikoladasm.aspark.dispatcher;
 
 import static nikoladasm.aspark.ASparkUtil.isAcceptContentType;
 

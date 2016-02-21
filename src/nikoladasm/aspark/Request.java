@@ -21,22 +21,23 @@ package nikoladasm.aspark;
 import java.util.Map;
 import java.util.Set;
 
-import nikoladasm.sattributemap.*;
+import nikoladasm.commons.dydamictypedmap.*;
 
-public interface Request extends SAttributeMap {
+public interface Request extends DydamicTypedMap {
 
 	Map<String, String> params();
 	String params(String param);
 	ParamsMap paramsMap();
 	ParamsMap paramsMap(String name);
 	String[] splat();
-	String requestMethod();
-	String method();
+	HttpMethod originalMethod();
+	HttpMethod method();
 	String host();
 	String userAgent();
 	int port();
 	String pathInfo();
 	String contentType();
+	String acceptType();
 	String ip();
 	String body();
 	<T> T body(RequestTransformer<T> transformer) throws Exception;
@@ -59,4 +60,6 @@ public interface Request extends SAttributeMap {
 	String cookie(String name);
 	long cookieMaxAge(String name);
 	String protocol();
+	void rewrite(String newPath);
+	String[] authorizationBasic();
 }

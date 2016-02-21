@@ -34,4 +34,5 @@ public interface Response {
 	void cookie(String path, String name, String value, int maxAge, boolean secured);
 	void cookie(String path, String name, String value, int maxAge, boolean secured, boolean httpOnly);
 	void removeCookie(String name);
+	void authenticateBasic(String realm);
 }

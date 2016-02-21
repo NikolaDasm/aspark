@@ -22,25 +22,15 @@ public class ASparkException extends RuntimeException {
 
 	private static final long serialVersionUID = 1L;
 
-	private String message;
-	private Exception exception;
-	
-	public ASparkException(String message, Exception exception) {
-		this.message = message;
-		this.exception = exception;
+	public ASparkException(String msg, Throwable t) {
+		super(msg, t);
 	}
 	
-	public ASparkException(String message) {
-		this(message, null);
+	public ASparkException(String msg) {
+		super(msg);
 	}
 
-	@Override
-	public String getMessage() {
-		return toString();
-	}
-	
-	@Override
-	public String toString() {
-		return (exception == null) ? message : message + " " + exception.getMessage();
+	public ASparkException(Throwable t) {
+		super(t);
 	}
 }

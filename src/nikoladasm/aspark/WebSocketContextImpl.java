@@ -43,12 +43,12 @@ public class WebSocketContextImpl implements WebSocketContext {
 	
 	@Override
 	public void send(String msg) {
-		channel.write(new TextWebSocketFrame(msg));
+		channel.writeAndFlush(new TextWebSocketFrame(msg));
 	}
 	
 	@Override
 	public void send(byte[] msg) {
-		channel.write(new BinaryWebSocketFrame(Unpooled.copiedBuffer(msg)));
+		channel.writeAndFlush(new BinaryWebSocketFrame(Unpooled.copiedBuffer(msg)));
 	}
 	
 	public ByteBuf frameBuffer() {

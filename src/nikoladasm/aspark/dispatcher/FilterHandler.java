@@ -16,7 +16,10 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package nikoladasm.aspark;
+package nikoladasm.aspark.dispatcher;
+
+import nikoladasm.aspark.Request;
+import nikoladasm.aspark.Response;
 
 public interface FilterHandler {
 	void handle(Request request, Response response) throws Exception;

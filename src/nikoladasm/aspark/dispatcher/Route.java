@@ -16,10 +16,13 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package nikoladasm.aspark;
+package nikoladasm.aspark.dispatcher;
 
 import java.util.Map;
 import java.util.regex.Pattern;
+
+import nikoladasm.aspark.HttpMethod;
+import nikoladasm.aspark.ResponseTransformer;
 
 public final class Route {
 	private HttpMethod httpMethod;

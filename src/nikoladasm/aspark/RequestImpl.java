@@ -25,6 +25,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 
+import java.util.Base64;
+
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import io.netty.handler.codec.http.FullHttpRequest;
@@ -37,7 +39,7 @@ import io.netty.handler.codec.http.cookie.ServerCookieDecoder;
 import static io.netty.handler.codec.http.HttpHeaders.Names.*;
 
 import nikoladasm.aspark.HttpMethod;
-import nikoladasm.sattributemap.*;
+import nikoladasm.commons.dydamictypedmap.*;
 
 import static nikoladasm.aspark.ASparkUtil.*;
 
@@ -49,7 +51,7 @@ public class RequestImpl implements Request {
 	private ParamsMap paramsMap;
 	private Boolean startWithWildcard;
 	private Matcher parameterMatcher;
-	private HttpMethod requestMethod;
+	private HttpMethod originalMethod;
 	private HttpMethod method;
 	private Map<String, List<String>> postAttr;
 	private String path;
@@ -60,15 +62,16 @@ public class RequestImpl implements Request {
 	private ParamsMap postMap;
 	private Map<String, Cookie> fullCookies;
 	private Map<String, String> cookies;
-	private SAttributeMap attributeMap;
+	private DydamicTypedMap attributeMap;
 	private HttpHeaders nettyHeaders;
 	private int port;
 	private String ipAddress;
 	private HttpVersion version;
+	private String newPath;
 	
 	public RequestImpl(FullHttpRequest request,
 			QueryStringDecoder queryStringDecoder,
-			HttpMethod requestMethod,
+			HttpMethod originalMethod,
 			HttpMethod method,
 			Map<String, List<String>> postAttr,
 			String path,
@@ -77,7 +80,7 @@ public class RequestImpl implements Request {
 			HttpVersion version) {
 		this.request = request;
 		this.queryStringDecoder = queryStringDecoder;
-		this.requestMethod = requestMethod;
+		this.originalMethod = originalMethod;
 		this.method = method;
 		this.postAttr = postAttr;
 		this.nettyHeaders = request.headers();
@@ -153,13 +156,13 @@ public class RequestImpl implements Request {
 	}
 	
 	@Override
-	public String requestMethod() {
-		return requestMethod.name();
+	public HttpMethod originalMethod() {
+		return originalMethod;
 	}
 	
 	@Override
-	public String method() {
-		return method.name();
+	public HttpMethod method() {
+		return method;
 	}
 	
 	@Override
@@ -185,6 +188,11 @@ public class RequestImpl implements Request {
 	@Override
 	public String contentType() {
 		return nettyHeaders.get(CONTENT_TYPE);
+	}
+	
+	@Override
+	public String acceptType() {
+		return nettyHeaders.get(ACCEPT);
 	}
 	
 	@Override
@@ -351,10 +359,10 @@ public class RequestImpl implements Request {
 	}
 
 	@Override
-	public <T> SAttribute<T> attr(SAttributeKey<T> key) {
+	public <T> DydamicTypedValue<T> value(DydamicTypedKey<T> key) {
 		if (attributeMap == null)
-			attributeMap = new DefaultSAttributeMap();
-		return attributeMap.attr(key);
+			attributeMap = new DefaultDydamicTypedMap();
+		return attributeMap.value(key);
 	}
 
 	@Override
@@ -364,13 +372,39 @@ public class RequestImpl implements Request {
 	}
 
 	@Override
-	public <T> boolean hasAttr(SAttributeKey<T> key) {
-		return (attributeMap == null) ? false : attributeMap.hasAttr(key);
+	public <T> boolean containsKey(DydamicTypedKey<T> key) {
+		return (attributeMap == null) ? false : attributeMap.containsKey(key);
 	}
 
 	@Override
-	public <T> void remove(SAttributeKey<T> key) {
+	public <T> void remove(DydamicTypedKey<T> key) {
 		if (attributeMap != null)
-			attributeMap.attr(key).remove();
+			attributeMap.value(key).remove();
+	}
+
+	@Override
+	public void rewrite(String newPath) {
+		this.newPath = newPath;
+	}
+	
+	public void path(String path) {
+		this.path = path;
+	}
+	
+	public String rewritePath() {
+		return newPath;
+	}
+	
+	@Override
+	public String[] authorizationBasic() {
+		String authorization = nettyHeaders.get(AUTHORIZATION);
+		if (authorization == null) return null;
+		String[] values = authorization.trim().split(" ");
+		if (values.length != 2) return null;
+		if ("Basic".equalsIgnoreCase(values[0].trim())) return null;
+		String userPass = new String(Base64.getDecoder().decode(values[1].trim()), UTF_8);
+		int delimiterIndex = userPass.indexOf(':');
+		if (delimiterIndex < 0) return null;
+		return new String[]{userPass.substring(0, delimiterIndex), userPass.substring(delimiterIndex+1)};
 	}
 }

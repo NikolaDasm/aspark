@@ -18,6 +18,9 @@
 
 package nikoladasm.aspark;
 
+import nikoladasm.aspark.dispatcher.FilterHandler;
+import nikoladasm.aspark.dispatcher.RouteHandler;
+
 public final class ASpark {
 
 	public static final RequestTransformer<String> DEFAULT_REQUEST_TRANSFORMER =

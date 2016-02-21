@@ -41,6 +41,12 @@ import javax.net.ssl.TrustManagerFactory;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 import nikoladasm.aspark.HttpMethod;
+import nikoladasm.aspark.dispatcher.Dispatcher;
+import nikoladasm.aspark.dispatcher.Filter;
+import nikoladasm.aspark.dispatcher.FilterHandler;
+import nikoladasm.aspark.dispatcher.Route;
+import nikoladasm.aspark.dispatcher.RouteHandler;
+import nikoladasm.aspark.dispatcher.StaticResourceLocation;
 import nikoladasm.aspark.server.ASparkServer;
 
 import static java.util.Objects.requireNonNull;
@@ -66,23 +72,17 @@ public class ASparkInstance extends Routable {
 	private volatile int maxThreads;
 	
 	private boolean started;
-	private RoutesList routes;
-	private FiltersList before;
-	private FiltersList after;
 	private volatile ASparkServer server;
 	private volatile CountDownLatch latch = new CountDownLatch(1);
+	private Dispatcher dispatcher;
 	private ExceptionMap exceptionMap;
 	private WebSocketMap webSockets;
-	private volatile StaticResourceLocation location;
-	private volatile StaticResourceLocation externalLocation;
 	private volatile SSLContext sslContext;
 	private volatile String serverName = DEFAULT_SERVER_NAME;
 	private Properties mimeTypes;
 
 	public ASparkInstance() {
-		routes = new RoutesList();
-		before = new FiltersList();
-		after = new FiltersList();
+		dispatcher = new Dispatcher();
 		exceptionMap = new ExceptionMap();
 		maxThreads = Runtime.getRuntime().availableProcessors();
 		webSockets = new WebSocketMap();
@@ -159,6 +159,7 @@ public class ASparkInstance extends Routable {
 		if (is == null) throw new ASparkException("File \"mime-types.properties\" not found.");
 		try {
 			mimeTypes.load(is);
+			dispatcher.mimeTypes(mimeTypes);
 		} catch (IOException e) {
 			throw new ASparkException("Could not load file \"mime-types.properties\"");
 		}
@@ -172,15 +173,15 @@ public class ASparkInstance extends Routable {
 		if (started)
 			throw new ASparkException(BEFORE_MAPPING_ERROR_MESSAGE);
 		requireNonNull(folder,"Path can't be null");
-		location = new StaticResourceLocation(folder, indexFiles);
+		dispatcher.location(new StaticResourceLocation(folder, indexFiles));
 		loadMimeTypes();
 	}
 	
 	public void staticFileLocationACL(String path, boolean allow) {
-		if (location == null)
+		if (dispatcher.location() == null)
 			throw new ASparkException("Static file location not set");
 		ACLEntry entry = new ACLEntry(buildPathPattern(path), allow);
-		location.aclEntry(entry);
+		dispatcher.location().aclEntry(entry);
 	}
 	
 	public synchronized void externalStaticFileLocation(String externalFolder) {
@@ -191,15 +192,15 @@ public class ASparkInstance extends Routable {
 		if (started)
 			throw new ASparkException(BEFORE_MAPPING_ERROR_MESSAGE);
 		requireNonNull(externalFolder,"Path can't be null");
-		externalLocation = new StaticResourceLocation(externalFolder, indexFiles);
+		dispatcher.externalLocation(new StaticResourceLocation(externalFolder, indexFiles));
 		loadMimeTypes();
 	}
 	
 	public void externalStaticFileLocationACL(String path, boolean allow) {
-		if (externalLocation == null)
+		if (dispatcher.externalLocation() == null)
 			throw new ASparkException("External static file location not set");
 		ACLEntry entry = new ACLEntry(buildPathPattern(path), allow);
-		externalLocation.aclEntry(entry);
+		dispatcher.externalLocation().aclEntry(entry);
 	}
 	
 	public void exception(Class<? extends Exception> exceptionClass, ExceptionHandler handler) {
@@ -226,16 +227,11 @@ public class ASparkInstance extends Routable {
 					pool,
 					ipAddress,
 					port,
-					routes,
-					before,
-					after,
-					location,
-					externalLocation,
+					dispatcher,
 					exceptionMap,
 					webSockets,
 					sslContext,
-					serverName,
-					mimeTypes);
+					serverName);
 			new Thread(() -> {
 				server.start();
 			}).start();
@@ -283,7 +279,7 @@ public class ASparkInstance extends Routable {
 				acceptedType,
 				handler,
 				responseTransformer);
-		routes.addLast(route);
+		dispatcher.routes().addLast(route);
 	}
 
 	@Override
@@ -304,9 +300,9 @@ public class ASparkInstance extends Routable {
 				acceptedType,
 				handler);
 		if (before)
-			this.before.addLast(filter);
+			dispatcher.before().addLast(filter);
 		else
-			after.addLast(filter);
+			dispatcher.after().addLast(filter);
 	}
 	
 	public synchronized void stop() {
@@ -332,19 +328,19 @@ public class ASparkInstance extends Routable {
 	public synchronized void clearRoutes() {
 		if (started)
 			throw new ASparkException(BEFORE_MAPPING_ERROR_MESSAGE);
-		routes.clear();
+		dispatcher.routes().clear();
 	}
 
 	public synchronized void clearBefore() {
 		if (started)
 			throw new ASparkException(BEFORE_MAPPING_ERROR_MESSAGE);
-		before.clear();
+		dispatcher.before().clear();
 	}
 
 	public synchronized void clearAfter() {
 		if (started)
 			throw new ASparkException(BEFORE_MAPPING_ERROR_MESSAGE);
-		after.clear();
+		dispatcher.after().clear();
 	}
 
 	public void webSocket(String path, WebSocketHandler handler) {

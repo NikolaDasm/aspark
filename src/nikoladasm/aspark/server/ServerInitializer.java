@@ -18,7 +18,6 @@
 
 package nikoladasm.aspark.server;
 
-import java.util.Properties;
 import java.util.concurrent.Executor;
 
 import javax.net.ssl.SSLContext;
@@ -34,10 +33,8 @@ import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.ssl.SslHandler;
 import io.netty.handler.stream.ChunkedWriteHandler;
 import nikoladasm.aspark.ExceptionMap;
-import nikoladasm.aspark.FiltersList;
-import nikoladasm.aspark.RoutesList;
-import nikoladasm.aspark.StaticResourceLocation;
 import nikoladasm.aspark.WebSocketMap;
+import nikoladasm.aspark.dispatcher.Dispatcher;
 
 public class ServerInitializer extends ChannelInitializer<SocketChannel> {
 
@@ -46,43 +43,29 @@ public class ServerInitializer extends ChannelInitializer<SocketChannel> {
 	
 	private String ipAddress;
 	private int port;
-	private RoutesList routes;
-	private FiltersList before;
-	private FiltersList after;
-	private StaticResourceLocation location;
-	private StaticResourceLocation externalLocation;
+	private Dispatcher dispatcher;
 	private ExceptionMap exceptionMap;
 	private WebSocketMap webSockets;
 	private String serverName;
-	private Properties mimeTypes;
 	private Executor pool;
 	
 	public ServerInitializer(SSLContext sslContext,
 			int maxContentLength,
 			String ipAddress,
 			int port,
-			RoutesList routes,
-			FiltersList before,
-			FiltersList after,
-			StaticResourceLocation location,
-			StaticResourceLocation externalLocation,
+			Dispatcher dispatcher,
 			ExceptionMap exceptionMap,
 			WebSocketMap webSockets,
 			String serverName,
-			Properties mimeTypes,
 			Executor pool) {
 		this.sslContext = sslContext;
 		this.maxContentLength = maxContentLength;
 		this.ipAddress = ipAddress;
-		this.routes = routes;
-		this.before = before;
-		this.after = after;
-		this.location = location;
-		this.externalLocation = externalLocation;
+		this.port = port;
+		this.dispatcher = dispatcher;
 		this.exceptionMap = exceptionMap;
 		this.webSockets = webSockets;
 		this.serverName = serverName;
-		this.mimeTypes = mimeTypes;
 		this.pool = pool;
 	}
 	
@@ -107,15 +90,10 @@ public class ServerInitializer extends ChannelInitializer<SocketChannel> {
 		ServerHandler serverHandler = new ServerHandler(
 				ipAddress,
 				port,
-				routes,
-				before,
-				after,
-				location,
-				externalLocation,
+				dispatcher,
 				exceptionMap,
 				webSockets,
 				serverName,
-				mimeTypes,
 				pool);
 		pipeline.addLast("handler", serverHandler);
 	}

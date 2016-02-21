@@ -33,10 +33,8 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 import nikoladasm.aspark.ExceptionMap;
-import nikoladasm.aspark.FiltersList;
-import nikoladasm.aspark.RoutesList;
-import nikoladasm.aspark.StaticResourceLocation;
 import nikoladasm.aspark.WebSocketMap;
+import nikoladasm.aspark.dispatcher.Dispatcher;
 
 public class ASparkServer {
 	
@@ -45,18 +43,13 @@ public class ASparkServer {
 	private static final int DEFAULT_MAX_CONTENT_LENGTH = 20480;
 	private String ipAddress;
 	private int port;
-	private RoutesList routes;
-	private FiltersList before;
-	private FiltersList after;
-	private StaticResourceLocation location;
-	private StaticResourceLocation externalLocation;
+	private Dispatcher dispatcher;
 	private ExceptionMap exceptionMap;
 	private WebSocketMap webSockets;
 	private int maxContentLength;
 	private SSLContext sslContext;
 	private CountDownLatch latch;
 	private String serverName;
-	private Properties mimeTypes;
 	
 	private volatile Channel channel;
 	private volatile EventLoopGroup bossGroup;
@@ -69,75 +62,51 @@ public class ASparkServer {
 			Executor pool,
 			String ipAddress,
 			int port,
-			RoutesList routes,
-			FiltersList beforeFilters,
-			FiltersList afterFilters,
-			StaticResourceLocation location,
-			StaticResourceLocation externalLocation,
+			Dispatcher dispatcher,
 			ExceptionMap exceptionMap,
 			WebSocketMap webSockets,
 			SSLContext sslContext,
 			int maxContentLength,
-			String serverName,
-			Properties mimeTypes) {
+			String serverName) {
 		this.pool = pool;
 		this.latch = latch;
 		this.ipAddress = ipAddress;
 		this.port = port;
-		this.routes = routes;
-		this.before = beforeFilters;
-		this.after = afterFilters;
-		this.location = location;
-		this.externalLocation = externalLocation;
+		this.dispatcher = dispatcher;
 		this.exceptionMap = exceptionMap;
 		this.webSockets = webSockets;
 		this.sslContext = sslContext;
 		this.maxContentLength = maxContentLength;
 		this.serverName = serverName;
-		this.mimeTypes = (mimeTypes == null) ? new Properties() : mimeTypes;
 	}
 	
 	public ASparkServer(CountDownLatch latch,
 			Executor pool,
 			String ipAddress,
 			int port,
-			RoutesList routes,
-			FiltersList beforeFilters,
-			FiltersList afterFilters,
-			StaticResourceLocation location,
-			StaticResourceLocation externalLocation,
+			Dispatcher dispatcher,
 			ExceptionMap exceptionMap,
 			WebSocketMap webSockets,
 			SSLContext sslContext,
-			String serverName,
-			Properties mimeTypes) {
+			String serverName) {
 		this(
 				latch,
 				pool,
 				ipAddress,
 				port,
-				routes,
-				beforeFilters,
-				afterFilters,
-				location,
-				externalLocation,
+				dispatcher,
 				exceptionMap,
 				webSockets,
 				sslContext,
 				DEFAULT_MAX_CONTENT_LENGTH,
-				serverName,
-				mimeTypes);
+				serverName);
 	}
 	
 	public ASparkServer(CountDownLatch latch,
 			Executor pool,
 			String ipAddress,
 			int port,
-			RoutesList routes,
-			FiltersList beforeFilters,
-			FiltersList afterFilters,
-			StaticResourceLocation location,
-			StaticResourceLocation externalLocation,
+			Dispatcher dispatcher,
 			ExceptionMap exceptionMap,
 			WebSocketMap webSockets,
 			int maxContentLength,
@@ -148,48 +117,33 @@ public class ASparkServer {
 				pool,
 				ipAddress,
 				port,
-				routes,
-				beforeFilters,
-				afterFilters,
-				location,
-				externalLocation,
+				dispatcher,
 				exceptionMap,
 				webSockets,
 				null,
 				maxContentLength,
-				serverName,
-				mimeTypes);
+				serverName);
 	}
 	
 	public ASparkServer(CountDownLatch latch,
 			Executor pool,
 			String ipAddress,
 			int port,
-			RoutesList routes,
-			FiltersList beforeFilters,
-			FiltersList afterFilters,
-			StaticResourceLocation location,
-			StaticResourceLocation externalLocation,
+			Dispatcher dispatcher,
 			ExceptionMap exceptionMap,
 			WebSocketMap webSockets,
-			String serverName,
-			Properties mimeTypes) {
+			String serverName) {
 		this(
 				latch,
 				pool,
 				ipAddress,
 				port,
-				routes,
-				beforeFilters, 
-				afterFilters,
-				location,
-				externalLocation,
+				dispatcher,
 				exceptionMap,
 				webSockets,
 				null,
 				DEFAULT_MAX_CONTENT_LENGTH,
-				serverName,
-				mimeTypes);
+				serverName);
 	}
 	
 	public void start() {
@@ -204,15 +158,10 @@ public class ASparkServer {
 						maxContentLength,
 						ipAddress,
 						port,
-						routes,
-						before,
-						after,
-						location,
-						externalLocation,
+						dispatcher,
 						exceptionMap,
 						webSockets,
 						serverName,
-						mimeTypes,
 						pool))
 				.option(ChannelOption.SO_BACKLOG, 1024)
 				.option(ChannelOption.SO_KEEPALIVE, true)

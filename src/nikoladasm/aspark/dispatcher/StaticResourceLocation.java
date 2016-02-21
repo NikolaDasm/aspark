@@ -16,7 +16,7 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package nikoladasm.aspark;
+package nikoladasm.aspark.dispatcher;
 
 import static nikoladasm.aspark.ASparkUtil.*;
 
@@ -25,6 +25,8 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.InputStream;
 import java.util.concurrent.ConcurrentLinkedQueue;
+
+import nikoladasm.aspark.ACLEntry;
 
 public class StaticResourceLocation {
 

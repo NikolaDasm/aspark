@@ -52,7 +52,7 @@ import static nikoladasm.aspark.ASpark.*;
 import static nikoladasm.aspark.Routable.DEFAULT_VIEW_ENGINE;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-import nikoladasm.sattributemap.SAttributeKey;
+import nikoladasm.commons.dydamictypedmap.*;
 import nikoladasm.simplehttpclient.HttpResponse;
 import nikoladasm.simplehttpclient.SimpleHttpClient;
 
@@ -853,7 +853,7 @@ public class ASparkUnitTest {
 	@Test
 	public void shouldBeGetHttpMethods() {
 		post("/httpmethod", (request, response) -> {
-			return "Original http method: "+request.requestMethod()+". Route http method: "+request.method();
+			return "Original http method: "+request.originalMethod()+". Route http method: "+request.method();
 		});
 		
 		String resSrt = C.get(PATH+"/httpmethod", (request, body) -> {
@@ -927,12 +927,12 @@ public class ASparkUnitTest {
 	@Test
 	public void shouldBeGetRequestAttrubute() {
 		before("/requestattrubute", (request, response) -> {
-			SAttributeKey<String> key = SAttributeKey.valueOf(String.class, "str");
-			request.attr(key).set("Test attribute");
+			DydamicTypedKey<String> key = DydamicTypedKey.valueOf(String.class, "str");
+			request.value(key).set("Test attribute");
 		});
 		post("/requestattrubute", (request, response) -> {
-			SAttributeKey<String> key = SAttributeKey.valueOf(String.class, "str");
-			return request.attr(key).get();
+			DydamicTypedKey<String> key = DydamicTypedKey.valueOf(String.class, "str");
+			return request.value(key).get();
 		});
 		
 		String resSrt = C.post(PATH+"/requestattrubute", "abc", clResTr);
@@ -980,6 +980,24 @@ public class ASparkUnitTest {
 		assertThat(clientResponse, is(notNullValue()));
 		assertThat(clientResponse.status(), is(equalTo(200)));
 		assertThat(resSrt, is(equalTo("echo: param_value")));
+	}
+	
+	@Test
+	public void shouldBePostParamsMap() throws Exception {
+		post("/postparamsmap", (request, response) -> {
+			String firstname = request.postMap("user").get("firstname").values()[0];
+			String lastname = request.postMap("user").get("lastname").values()[0];
+			return "First name \""+firstname+"\", last name \""+lastname+"\"";
+		});
+		String rqbody = "user[firstname]=best&user[lastname]=user";
+		String resSrt = C.post(PATH+"/postparamsmap", rqbody, (request, body) -> {
+			request.header("Content-Type", "application/x-www-form-urlencoded");
+			return body.getBytes(UTF_8);
+		}, clResTr);
+		assertThat(resSrt, is(notNullValue()));
+		assertThat(clientResponse, is(notNullValue()));
+		assertThat(clientResponse.status(), is(equalTo(200)));
+		assertThat(resSrt, is(equalTo("First name \"best\", last name \"user\"")));
 	}
 	
 	//////////////////////////////////////////////////////////////////////////////
