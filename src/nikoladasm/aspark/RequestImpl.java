@@ -68,6 +68,7 @@ public class RequestImpl implements Request {
 	private String ipAddress;
 	private HttpVersion version;
 	private String newPath;
+	private boolean staticResource;
 	
 	public RequestImpl(FullHttpRequest request,
 			QueryStringDecoder queryStringDecoder,
@@ -406,5 +407,14 @@ public class RequestImpl implements Request {
 		int delimiterIndex = userPass.indexOf(':');
 		if (delimiterIndex < 0) return null;
 		return new String[]{userPass.substring(0, delimiterIndex), userPass.substring(delimiterIndex+1)};
+	}
+	
+	@Override
+	public void staticResource() {
+		staticResource = true;
+	}
+	
+	public boolean isStaticResource() {
+		return staticResource;
 	}
 }

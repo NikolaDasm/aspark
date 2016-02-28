@@ -48,7 +48,7 @@ public final class ASparkUtil {
 	
 	private ASparkUtil() {}
 	
-	private static String processRegexPath(String path, String asteriskReplacement) {
+	private static String processRegexPath(String path, String asteriskReplacement, String slashAsteriskReplacement) {
 		String pathToUse = sanitizePath(path);
 		int length = pathToUse.length();
 		StringBuilder sb = new StringBuilder();
@@ -59,6 +59,12 @@ public final class ASparkUtil {
 				sb.append(asteriskReplacement);
 				startWithWildcard = true;
 				continue;
+			}
+			if (i == length-2 && c == '/' && pathToUse.charAt(i+1) == '*') {
+				if (startWithWildcard)
+					throw new IllegalArgumentException("Path can't contain first and last star wildcard");
+				sb.append(slashAsteriskReplacement);
+				break;
 			}
 			if (i == length-1 && c == '*') {
 				if (startWithWildcard)
@@ -76,7 +82,7 @@ public final class ASparkUtil {
 	}
 	
 	public static Pattern buildParameterizedPathPattern(String path, Map<String, Integer> parameterNamesMap, Boolean startWithWildcard) {
-		String pathToUse = processRegexPath(path, "(.*)");
+		String pathToUse = processRegexPath(path, "(.*)", "(?:/?|/(.+))");
 		Matcher parameterMatcher = PATTERN.matcher(pathToUse);
 		int i = 1;
 		while (parameterMatcher.find()) {
@@ -90,7 +96,7 @@ public final class ASparkUtil {
 	}
 	
 	public static Pattern buildPathPattern(String path) {
-		String pathToUse = processRegexPath(path, ".*");
+		String pathToUse = processRegexPath(path, ".*", "(?:/?|/.+)");
 		return Pattern.compile("^"+pathToUse+"$");
 	}
 	

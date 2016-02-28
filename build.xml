@@ -17,7 +17,7 @@
      along with this program.  If not, see <http://www.gnu.org/licenses/>.
 -->
 <project name="aspark-core">
-	<property name="version" value="0.1.5b"/>
+	<property name="version" value="0.1.6b"/>
 	<property name="src.dir" value="src"/>
 	<property name="test.dir" value="test"/>
 	<property name="build.dir" value="build"/>

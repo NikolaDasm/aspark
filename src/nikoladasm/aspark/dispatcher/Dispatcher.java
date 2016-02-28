@@ -147,7 +147,7 @@ public class Dispatcher {
 					request.path(path);
 					break;
 				}
-				return true;
+				return !request.isStaticResource();
 			}
 		} while (request.rewritePath() != null);
 		return false;

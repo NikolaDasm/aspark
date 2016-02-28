@@ -62,4 +62,5 @@ public interface Request extends DydamicTypedMap {
 	String protocol();
 	void rewrite(String newPath);
 	String[] authorizationBasic();
+	void staticResource();
 }
